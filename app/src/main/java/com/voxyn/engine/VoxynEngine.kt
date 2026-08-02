@@ -8,12 +8,14 @@ import com.voxyn.core.*
 import com.voxyn.execution.ExecutionController
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
+import com.voxyn.mode.ModeEngine
 import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.TextToSpeechManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import org.json.JSONArray
 
 class VoxynEngine(
     private val scope          : CoroutineScope,
@@ -23,6 +25,7 @@ class VoxynEngine(
     private val executor       : ExecutionController,
     private val tts            : TextToSpeechManager,
     private val claudeResolver : ClaudeIntentResolver? = null,
+    private val modeEngine     : ModeEngine? = null,
     private val phaseTimeoutMs : Long = 10_000L
 ) {
     private val _events = MutableSharedFlow<PipelineEvent>(extraBufferCapacity = 64)
@@ -48,34 +51,41 @@ class VoxynEngine(
     // ─── Pipeline ─────────────────────────────────────────────────────
 
     private suspend fun runPipeline(raw: String) {
-        VoxynLogger.i("▶ \"$raw\"", "ENGINE")
+        VoxynLogger.i("▶ Starting pipeline for: \"$raw\"", "ENGINE")
+        emit(PipelineEvent.PhaseStarted(PipelinePhase.INPUT))
+        emit(PipelineEvent.PhaseCompleted(PipelinePhase.INPUT, raw))
+
         setOverlay("LISTENING")
 
         val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) } ?: return
-        setOverlay("THINKING")
+        setOverlay("PROCESSING")
 
         var intent = phase(PipelinePhase.INTENT) { resolveIntent(perceived) } ?: return
         var claudeSpeak: String? = null
 
-        // Claude fallback
-        if (intent.action == "UNKNOWN" && intent.confidence < 0.3f && claudeResolver != null) {
-            VoxynLogger.i("Asking Claude...", "ENGINE")
-            tts.speak("Let me think...")
+        // Claude fallback for UNKNOWN intent
+        if (intent.action == "UNKNOWN" && claudeResolver != null) {
+            VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
+            setOverlay("PROCESSING", "Thinking...")
+            tts.speak("Let me check...")
             val result: ClaudeResult? = try {
                 withTimeout(12_000L) { claudeResolver.resolve(perceived) }
             } catch (e: Exception) {
                 VoxynLogger.e("Claude error: ${e.message}", tag = "ENGINE"); null
             }
-            if (result != null) {
+            if (result != null && result.intent.action != "UNKNOWN") {
                 intent = result.intent
                 claudeSpeak = result.speakOverride
+                VoxynLogger.i("Claude resolved intent: ${intent.action}", "ENGINE")
             }
         }
 
         if (intent.action == "UNKNOWN") {
-            tts.speak("I didn't understand that. Try: turn on WiFi, open YouTube, or set a timer.")
+            tts.speak("I didn't understand that command. Try saying turn on WiFi, open YouTube, or scroll down.")
             emit(PipelineEvent.ClarificationRequired(listOf("Unknown command")))
-            setOverlay("ERROR")
+            setOverlay("ERROR", "Unknown command")
+            delay(1500L)
+            setOverlay("IDLE")
             return
         }
 
@@ -88,27 +98,43 @@ class VoxynEngine(
         when (decision) {
             is DecisionState.AwaitingConfirmation -> {
                 pendingInput = raw
+                val promptText = "Confirm ${friendlyAction(intent.action)}?"
+                setOverlay("CONFIRMATION", promptText)
                 tts.speak("Should I ${friendlyAction(intent.action)}? Say yes to confirm.")
                 emit(PipelineEvent.ConfirmationRequired(decision.intent))
-                setOverlay("IDLE")
                 return
             }
             is DecisionState.AwaitingClarification -> {
                 pendingInput = raw
-                tts.speak("I need more info: ${decision.missing.firstOrNull() ?: "please clarify"}.")
+                val msg = decision.missing.firstOrNull() ?: "please clarify"
+                setOverlay("ERROR", msg)
+                tts.speak("I need more info: $msg.")
                 emit(PipelineEvent.ClarificationRequired(decision.missing))
+                delay(1500L)
                 setOverlay("IDLE")
                 return
             }
             is DecisionState.Rejected -> {
-                tts.speak("That action was rejected.")
-                setOverlay("ERROR")
+                setOverlay("ERROR", "Action rejected")
+                tts.speak("Action rejected.")
+                delay(1500L)
+                setOverlay("IDLE")
                 return
             }
             is DecisionState.Execute -> Unit
         }
 
-        setOverlay("EXECUTING")
+        // ─── Handling Smart Chain Commands ───────────────────────────
+        if (intent.action == "CHAIN" || intent.params.containsKey("steps")) {
+            val stepsStr = intent.params["steps"] ?: "[]"
+            runChainExecution(stepsStr, claudeSpeak)
+            return
+        }
+
+        // Single Step Execution
+        val actionText = friendlyAction(intent.action)
+        setOverlay("SPEAKING", actionText)
+
         val plan     = phase(PipelinePhase.PLAN)   { buildPlan(intent) } ?: return
         val executed = executeWithRecovery(plan)    ?: return
         val outcome  = phase(PipelinePhase.VERIFY) { verify(executed) }  ?: return
@@ -116,7 +142,7 @@ class VoxynEngine(
         emit(PipelineEvent.VerificationResult(outcome))
 
         val isSuccess = outcome is VerificationOutcome.Success
-        setOverlay(if (isSuccess) "SUCCESS" else "ERROR")
+        setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
 
         val speech = claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
         tts.speak(speech)
@@ -124,7 +150,79 @@ class VoxynEngine(
         phase(PipelinePhase.LEARN) { learn(intent, outcome) }
         pendingInput = null
         emit(PipelineEvent.PipelineComplete)
-        VoxynLogger.i("✓ Done", "ENGINE")
+        VoxynLogger.i("✓ Pipeline complete", "ENGINE")
+
+        delay(1500L)
+        setOverlay("IDLE")
+    }
+
+    // ─── Smart Chain Execution ────────────────────────────────────────
+
+    private suspend fun runChainExecution(stepsJsonStr: String, claudeSpeak: String?) {
+        VoxynLogger.i("Executing Smart Chain sequence: $stepsJsonStr", "ENGINE")
+        val stepsList = mutableListOf<String>()
+        runCatching {
+            val arr = JSONArray(stepsJsonStr)
+            for (i in 0 until arr.length()) {
+                stepsList.add(arr.getString(i))
+            }
+        }.onFailure {
+            stepsList.addAll(stepsJsonStr.replace("[", "").replace("]", "").replace("\"", "").split(","))
+        }
+
+        val chainPlanSteps = mutableListOf<ActionStep>()
+        stepsList.forEachIndexed { idx, rawStep ->
+            val clean = rawStep.trim()
+            val (act, params) = if (clean.contains(":")) {
+                val parts = clean.split(":")
+                parts[0] to mapOf("app_name" to parts[1], "contact" to parts[1], "destination" to parts[1])
+            } else {
+                clean to emptyMap()
+            }
+            chainPlanSteps.add(ActionStep("step_$idx", act, act, params))
+        }
+
+        val plan = ExecutionPlan(chainPlanSteps)
+        emit(PipelineEvent.PhaseCompleted(PipelinePhase.PLAN, "Chain plan built (${chainPlanSteps.size} steps)"))
+
+        if (!claudeSpeak.isNullOrEmpty()) {
+            tts.speak(claudeSpeak)
+        }
+
+        var cur = plan
+        while (!cur.isComplete) {
+            val step = cur.currentAction ?: break
+            emit(PipelineEvent.ExecutionStepStarted(step))
+
+            val friendly = friendlyAction(step.actionType)
+            setOverlay("SPEAKING", friendly)
+            tts.speak(friendly)
+
+            val result = executor.execute(step)
+            if (result is PhaseResult.Failure) {
+                setOverlay("ERROR", "Chain failed at ${step.actionType}")
+                tts.speak("Failed to ${step.actionType}")
+                emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, result.error, false))
+                delay(1500L)
+                setOverlay("IDLE")
+                return
+            }
+
+            emit(PipelineEvent.ExecutionStepCompleted(step, (result as PhaseResult.Success).value))
+            cur = cur.advance()
+            delay(500L) // 500ms gap between steps
+        }
+
+        val outcome = VerificationOutcome.Success
+        emit(PipelineEvent.VerificationResult(outcome))
+        setOverlay("SUCCESS", "Chain complete")
+        tts.speak("Sequence completed.")
+        pendingInput = null
+        emit(PipelineEvent.PipelineComplete)
+        VoxynLogger.i("✓ Chain execution completed successfully", "ENGINE")
+
+        delay(1500L)
+        setOverlay("IDLE")
     }
 
     // ─── Recovery ─────────────────────────────────────────────────────
@@ -134,9 +232,9 @@ class VoxynEngine(
         VoxynLogger.w("Attempt 1 failed — retrying", "ENGINE")
         phase(PipelinePhase.EXECUTE) { executePlan(plan) }?.let { return it }
         VoxynLogger.w("Both attempts failed", "ENGINE")
-        tts.speak("I couldn't complete that. Please try manually.")
+        tts.speak("I couldn't complete that action.")
         emit(PipelineEvent.ClarificationRequired(listOf("Execution failed")))
-        setOverlay("ERROR")
+        setOverlay("ERROR", "Failed")
         return null
     }
 
@@ -219,59 +317,82 @@ class VoxynEngine(
 
     private fun emit(event: PipelineEvent) { scope.launch { _events.emit(event) } }
 
-    private fun setOverlay(state: String) {
-        try {
-            context.startService(
-                Intent(context, OverlayService::class.java).apply {
-                    putExtra("state", state)
-                }
-            )
-        } catch (_: Exception) {}
+    private fun setOverlay(state: String, text: String? = null) {
+        // Use singleton directly to avoid startService latency and race conditions
+        val overlay = OverlayService.instance
+        if (overlay != null) {
+            overlay.setState(state, text)
+        } else {
+            // Service not running yet — start it (state will be queued internally)
+            try {
+                context.startService(
+                    Intent(context, OverlayService::class.java).apply {
+                        putExtra("state", state)
+                        text?.let { putExtra("text", it) }
+                    }
+                )
+            } catch (_: Exception) {}
+        }
     }
 
     // ─── Friendly messages ────────────────────────────────────────────
 
     private fun friendlyAction(action: String) = when (action) {
-        "WIFI_ON"       -> "turn on WiFi"
-        "WIFI_OFF"      -> "turn off WiFi"
-        "BLUETOOTH_ON"  -> "enable Bluetooth"
-        "FLASHLIGHT_ON" -> "turn on the flashlight"
-        "SILENT_MODE"   -> "enable silent mode"
-        "SEND_MESSAGE"  -> "send that message"
-        "CALL_CONTACT"  -> "make that call"
-        else            -> action.replace("_", " ").lowercase()
+        "WIFI_ON"              -> "turn on WiFi"
+        "WIFI_OFF"             -> "turn off WiFi"
+        "BLUETOOTH_ON"         -> "enable Bluetooth"
+        "FLASHLIGHT_ON"        -> "turn on flashlight"
+        "SILENT_MODE"          -> "enable silent mode"
+        "SEND_CURRENT_MESSAGE" -> "send message"
+        "LIKE_CURRENT"         -> "like current"
+        "SCROLL_DOWN"          -> "scroll down"
+        "SCROLL_UP"            -> "scroll up"
+        "GO_BACK"              -> "go back"
+        "GO_HOME"              -> "go home"
+        "READ_NOTIFICATIONS"   -> "read notifications"
+        "REMEMBER_THIS"        -> "remember this screen"
+        "CALL_CONTACT"         -> "make call"
+        else                   -> action.replace("_", " ").lowercase()
     }
 
     private fun friendlySuccess(action: String, params: Map<String, String>, outcome: VerificationOutcome): String {
         if (outcome !is VerificationOutcome.Success) return "Done, but something may not have worked."
         return when (action) {
-            "WIFI_ON"          -> "WiFi is on."
-            "WIFI_OFF"         -> "WiFi is off."
-            "BLUETOOTH_ON"     -> "Bluetooth on."
-            "BLUETOOTH_OFF"    -> "Bluetooth off."
-            "VOLUME_UP"        -> "Volume up."
-            "VOLUME_DOWN"      -> "Volume down."
-            "SILENT_MODE"      -> "Silent mode on."
-            "VIBRATE_MODE"     -> "Vibrate mode on."
-            "NORMAL_MODE"      -> "Ringer on."
-            "FLASHLIGHT_ON"    -> "Flashlight on."
-            "FLASHLIGHT_OFF"   -> "Flashlight off."
-            "SCREENSHOT"       -> "Screenshot taken."
-            "BRIGHTNESS_UP"    -> "Brightness up."
-            "BRIGHTNESS_DOWN"  -> "Brightness down."
-            "BATTERY_SAVER_ON" -> "Battery saver on."
-            "PLAY_MUSIC"       -> "Playing music."
-            "PAUSE_MUSIC"      -> "Music paused."
-            "NEXT_TRACK"       -> "Next track."
-            "PREV_TRACK"       -> "Previous track."
-            "OPEN_APP"         -> "Opening ${params["app_name"] ?: "app"}."
-            "CALL_CONTACT"     -> "Calling ${params["contact"] ?: "contact"}."
-            "SET_ALARM"        -> "Alarm set."
-            "SET_TIMER"        -> "Timer started."
-            "NAVIGATE"         -> "Opening navigation to ${params["destination"] ?: "destination"}."
-            "LOCK_PHONE"       -> "Locking phone."
-            "MODE_ACTIVATE"    -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} activated."
-            else               -> "Done."
+            "WIFI_ON"              -> "WiFi is on."
+            "WIFI_OFF"             -> "WiFi is off."
+            "BLUETOOTH_ON"         -> "Bluetooth on."
+            "BLUETOOTH_OFF"        -> "Bluetooth off."
+            "VOLUME_UP"            -> "Volume up."
+            "VOLUME_DOWN"          -> "Volume down."
+            "SILENT_MODE"          -> "Silent mode on."
+            "VIBRATE_MODE"         -> "Vibrate mode on."
+            "NORMAL_MODE"          -> "Ringer on."
+            "FLASHLIGHT_ON"        -> "Flashlight on."
+            "FLASHLIGHT_OFF"       -> "Flashlight off."
+            "SCREENSHOT"           -> "Screenshot taken."
+            "BRIGHTNESS_UP"        -> "Brightness up."
+            "BRIGHTNESS_DOWN"      -> "Brightness down."
+            "BATTERY_SAVER_ON"     -> "Battery saver on."
+            "PLAY_MUSIC"           -> "Playing music."
+            "PAUSE_MUSIC"          -> "Music paused."
+            "NEXT_TRACK"           -> "Next track."
+            "PREV_TRACK"           -> "Previous track."
+            "OPEN_APP"             -> "Opening ${params["app_name"] ?: "app"}."
+            "CALL_CONTACT"         -> "Calling ${params["contact"] ?: "contact"}."
+            "SET_ALARM"            -> "Alarm set."
+            "SET_TIMER"            -> "Timer started."
+            "NAVIGATE"             -> "Opening navigation to ${params["destination"] ?: "destination"}."
+            "LOCK_PHONE"           -> "Locking phone."
+            "MODE_ACTIVATE"        -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} activated."
+            "SEND_CURRENT_MESSAGE" -> "Message sent."
+            "LIKE_CURRENT"         -> "Liked."
+            "SCROLL_DOWN"          -> "Scrolled down."
+            "SCROLL_UP"            -> "Scrolled up."
+            "GO_BACK"              -> "Going back."
+            "GO_HOME"              -> "Going home."
+            "READ_NOTIFICATIONS"   -> "Opening notifications."
+            "REMEMBER_THIS"        -> "Saved to memory."
+            else                   -> "Done."
         }
     }
 

@@ -39,23 +39,29 @@ BRIGHTNESS_UP / BRIGHTNESS_DOWN
 AIRPLANE_ON / AIRPLANE_OFF
 BATTERY_SAVER_ON / BATTERY_STATUS
 PLAY_MUSIC / PAUSE_MUSIC / NEXT_TRACK / PREV_TRACK
-TAKE_PHOTO / RECORD_VIDEO
 OPEN_APP — params: {"app_name": "spotify"}
 SEND_MESSAGE — params: {"contact": "John", "message": "On my way"}
 CALL_CONTACT — params: {"contact": "Mom"}
 SET_ALARM — params: {"time": "7:30am", "label": "Wake up"}
 SET_TIMER — params: {"duration": "10 minutes"}
-SET_REMINDER — params: {"text": "Buy milk", "time": "6pm"}
 NAVIGATE — params: {"destination": "Starbucks", "mode": "driving"}
 LOCK_PHONE
 MODE_ACTIVATE — params: {"mode_name": "driving"}
+SEND_CURRENT_MESSAGE
+LIKE_CURRENT
+SCROLL_DOWN / SCROLL_UP
+GO_BACK / GO_HOME
+READ_NOTIFICATIONS
+REMEMBER_THIS
+CHAIN — params: {"steps": "[\"OPEN_APP:spotify\", \"PLAY_MUSIC\", \"VOLUME_UP\"]"}
 UNKNOWN — if nothing matches
 
 EXAMPLES:
 "Call my wife" → {"action":"CALL_CONTACT","confidence":0.95,"params":{"contact":"wife"},"speak":"Calling your wife."}
 "Set a timer for pasta" → {"action":"SET_TIMER","confidence":0.97,"params":{"duration":"10 minutes","label":"pasta"},"speak":"Timer started."}
-"Navigate home" → {"action":"NAVIGATE","confidence":0.95,"params":{"destination":"home","mode":"driving"},"speak":"Opening navigation."}
-"Driving mode" → {"action":"MODE_ACTIVATE","confidence":0.98,"params":{"mode_name":"driving"},"speak":"Driving mode activated."}
+"Open spotify and play music" → {"action":"CHAIN","confidence":0.95,"params":{"steps":"[\"OPEN_APP:spotify\", \"PLAY_MUSIC\"]"},"speak":"Opening Spotify and playing music."}
+"Scroll down" → {"action":"SCROLL_DOWN","confidence":0.96,"params":{},"speak":"Scrolling down."}
+"Send this message" → {"action":"SEND_CURRENT_MESSAGE","confidence":0.97,"params":{},"speak":"Sending message."}
         """.trimIndent()
     }
 

@@ -5,11 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -17,13 +16,6 @@ import android.os.Looper
 import com.voxyn.MainActivity
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.VoiceInputService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlin.math.sqrt
 
 class WakeWordService : Service() {
 
@@ -34,29 +26,76 @@ class WakeWordService : Service() {
         const val ACTION_STOP     = "com.voxyn.wake.STOP"
         const val ACTION_RESUME   = "com.voxyn.wake.RESUME"
         const val ACTION_TRIGGER  = "com.voxyn.wake.TRIGGER_NOW"
-        const val SAMPLE_RATE     = 16000
+        private const val RESTART_DELAY_MS = 800L
+        private const val BATTERY_PAUSE_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
     }
 
-    private val scope       = CoroutineScope(Dispatchers.Default + Job())
-    private var audioRecord : AudioRecord? = null
-    private var detectJob   : Job? = null
-    private var isListening = false
-    private var isWaiting   = false
-    private val handler     = Handler(Looper.getMainLooper())
+    private val handler = Handler(Looper.getMainLooper())
+    private var isListeningLoopActive = false
+    private var isPausedForBattery = false
+
+    private val screenOffRunnable = Runnable {
+        VoxynLogger.i("Screen off > 5 mins: Pausing voice listening for battery optimization", "WAKE")
+        isPausedForBattery = true
+        updateNotification("VOXYN paused (Screen off)")
+    }
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    VoxynLogger.d("Screen OFF detected — scheduling battery pause in 5 mins", "WAKE")
+                    handler.postDelayed(screenOffRunnable, BATTERY_PAUSE_TIMEOUT_MS)
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    VoxynLogger.d("Screen ON detected — cancelling battery pause", "WAKE")
+                    handler.removeCallbacks(screenOffRunnable)
+                    if (isPausedForBattery) {
+                        isPausedForBattery = false
+                        VoxynLogger.i("Screen turned ON — resuming continuous listening", "WAKE")
+                        updateNotification("VOXYN listening active")
+                        startVoiceInput()
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("VOXYN ready — speak to activate"))
-        VoxynLogger.i("WakeWordService created", "WAKE")
+        startForeground(NOTIFICATION_ID, buildNotification("VOXYN continuous listening active"))
+        registerScreenReceiver()
+        VoxynLogger.i("WakeWordService created — continuous listening enabled", "WAKE")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START   -> if (!isListening) startDetection()
-            ACTION_STOP    -> { stopDetection(); stopSelf() }
-            ACTION_RESUME  -> { isWaiting = false; handler.postDelayed({ startDetection() }, 1500L) }
-            ACTION_TRIGGER -> triggerVoiceInput()
+            ACTION_START -> {
+                isListeningLoopActive = true
+                isPausedForBattery = false
+                startVoiceInput()
+            }
+            ACTION_STOP -> {
+                isListeningLoopActive = false
+                handler.removeCallbacksAndMessages(null)
+                stopSelf()
+            }
+            ACTION_RESUME -> {
+                if (isListeningLoopActive && !isPausedForBattery) {
+                    handler.postDelayed({ startVoiceInput() }, RESTART_DELAY_MS)
+                }
+            }
+            ACTION_TRIGGER -> {
+                isPausedForBattery = false
+                startVoiceInput()
+            }
+            else -> {
+                if (!isListeningLoopActive) {
+                    isListeningLoopActive = true
+                    startVoiceInput()
+                }
+            }
         }
         return START_STICKY
     }
@@ -64,66 +103,26 @@ class WakeWordService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        stopDetection()
-        scope.cancel()
+        isListeningLoopActive = false
+        handler.removeCallbacksAndMessages(null)
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {}
         super.onDestroy()
+        VoxynLogger.i("WakeWordService destroyed", "WAKE")
     }
 
-    private fun startDetection() {
-        if (isListening || isWaiting) return
-        isListening = true
-        updateNotification("Waiting for you to speak...")
-
-        detectJob?.cancel()
-        detectJob = scope.launch {
-            val bufferSize = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(4096)
-
-            val record = try {
-                AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufferSize * 4
-                ).also { audioRecord = it }
-            } catch (e: Exception) {
-                VoxynLogger.e("AudioRecord failed: ${e.message}", tag = "WAKE")
-                isListening = false; return@launch
-            }
-
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                isListening = false; record.release(); return@launch
-            }
-
-            record.startRecording()
-            val buffer   = ShortArray(bufferSize)
-            val detector = SpeechEnergyDetector()
-
-            while (isListening) {
-                val read = record.read(buffer, 0, bufferSize)
-                if (read > 0 && detector.isSpeech(rms(buffer, read))) {
-                    isListening = false
-                    isWaiting   = true
-                    triggerVoiceInput()
-                }
-                delay(20)
-            }
-            try { record.stop(); record.release() } catch (_: Exception) {}
-            audioRecord = null
+    private fun registerScreenReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
         }
+        registerReceiver(screenReceiver, filter)
     }
 
-    private fun stopDetection() {
-        isListening = false
-        detectJob?.cancel()
-        try { audioRecord?.stop(); audioRecord?.release() } catch (_: Exception) {}
-        audioRecord = null
-    }
-
-    private fun triggerVoiceInput() {
-        updateNotification("Listening to your command...")
+    private fun startVoiceInput() {
+        if (!isListeningLoopActive || isPausedForBattery) return
+        updateNotification("Listening...")
         try {
             startForegroundService(
                 Intent(this, VoiceInputService::class.java).apply {
@@ -132,15 +131,8 @@ class WakeWordService : Service() {
             )
         } catch (e: Exception) {
             VoxynLogger.e("Failed to start VoiceInputService: ${e.message}", tag = "WAKE")
-            isWaiting = false
-            handler.postDelayed({ startDetection() }, 2000L)
+            handler.postDelayed({ startVoiceInput() }, 2000L)
         }
-    }
-
-    private fun rms(data: ShortArray, size: Int): Float {
-        var sum = 0.0
-        for (i in 0 until size) sum += data[i].toDouble() * data[i]
-        return sqrt(sum / size).toFloat()
     }
 
     private fun buildNotification(text: String): Notification {
@@ -173,22 +165,5 @@ class WakeWordService : Service() {
                         .apply { setShowBadge(false); setSound(null, null); enableVibration(false) }
                 )
         }
-    }
-}
-
-class SpeechEnergyDetector {
-    private var baseline   = -1f
-    private var consecHigh = 0
-    private var calibCount = 0
-
-    fun isSpeech(amplitude: Float): Boolean {
-        if (calibCount < 20) {
-            calibCount++
-            baseline = if (baseline < 0f) amplitude else (baseline * 0.85f + amplitude * 0.15f)
-            return false
-        }
-        val threshold = (baseline * 3.0f).coerceAtLeast(500f)
-        consecHigh = if (amplitude > threshold) consecHigh + 1 else (consecHigh - 1).coerceAtLeast(0)
-        return if (consecHigh >= 8) { consecHigh = 0; true } else false
     }
 }

@@ -13,9 +13,14 @@ import android.provider.AlarmClock
 import android.provider.Settings
 import com.voxyn.core.ActionStep
 import com.voxyn.core.PhaseResult
+import com.voxyn.mode.ModeEngine
+import com.voxyn.perception.VoxynAccessibilityService
 import com.voxyn.utils.VoxynLogger
 
-class ExecutionController(private val context: Context) {
+class ExecutionController(
+    private val context: Context,
+    private val modeEngine: ModeEngine
+) {
 
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -28,6 +33,17 @@ class ExecutionController(private val context: Context) {
         VoxynLogger.i("Executing: ${step.actionType}", "EXEC")
         return try {
             when (step.actionType) {
+                // ─── Accessibility Features ───────────────────────────
+                "SEND_CURRENT_MESSAGE" -> sendCurrentMessage()
+                "LIKE_CURRENT"         -> likeCurrent()
+                "SCROLL_DOWN"          -> scrollDown()
+                "SCROLL_UP"            -> scrollUp()
+                "GO_BACK"              -> goBack()
+                "GO_HOME"              -> goHome()
+                "READ_NOTIFICATIONS"   -> readNotifications()
+                "REMEMBER_THIS"        -> rememberThis()
+
+                // ─── Core System Actions ──────────────────────────────
                 "WIFI_ON"          -> wifiOn()
                 "WIFI_OFF"         -> wifiOff()
                 "BLUETOOTH_ON"     -> bluetoothOn()
@@ -56,7 +72,7 @@ class ExecutionController(private val context: Context) {
                 "NAVIGATE"         -> navigate(step.params["destination"] ?: step.params["destinations"] ?: "")
                 "CALL_CONTACT"     -> callContact(step.params["contact"] ?: "")
                 "LOCK_PHONE"       -> lockPhone()
-                "MODE_ACTIVATE"    -> PhaseResult.Success("Mode handled by ModeEngine")
+                "MODE_ACTIVATE"    -> activateMode(step.params["mode_name"] ?: "normal")
                 else               -> PhaseResult.Failure("Unknown action: ${step.actionType}", canFallback = true)
             }
         } catch (e: Exception) {
@@ -65,7 +81,70 @@ class ExecutionController(private val context: Context) {
         }
     }
 
-    // ─── WiFi ─────────────────────────────────────────────────────────
+    // ─── Accessibility Actions ────────────────────────────────────────
+
+    private fun sendCurrentMessage(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled. Please enable VOXYN Assistant in Settings.", canFallback = false)
+        val success = service.performSendCurrentMessage()
+        return if (success) PhaseResult.Success("Message sent") else PhaseResult.Failure("Send button not found on screen", canFallback = false)
+    }
+
+    private fun likeCurrent(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performLikeCurrent()
+        return if (success) PhaseResult.Success("Liked") else PhaseResult.Failure("Like button not found on screen", canFallback = false)
+    }
+
+    private fun scrollDown(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performScrollDown()
+        return if (success) PhaseResult.Success("Scrolled down") else PhaseResult.Failure("Could not scroll", canFallback = false)
+    }
+
+    private fun scrollUp(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performScrollUp()
+        return if (success) PhaseResult.Success("Scrolled up") else PhaseResult.Failure("Could not scroll", canFallback = false)
+    }
+
+    private fun goBack(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performGoBack()
+        return if (success) PhaseResult.Success("Went back") else PhaseResult.Failure("Back action failed", canFallback = false)
+    }
+
+    private fun goHome(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performGoHome()
+        return if (success) PhaseResult.Success("Went to Home Screen") else PhaseResult.Failure("Home action failed", canFallback = false)
+    }
+
+    private fun readNotifications(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val success = service.performReadNotifications()
+        return if (success) PhaseResult.Success("Opening notifications shade") else PhaseResult.Failure("Notifications action failed", canFallback = false)
+    }
+
+    private fun rememberThis(): PhaseResult<String> {
+        val service = VoxynAccessibilityService.instance
+            ?: return PhaseResult.Failure("Accessibility Service disabled.", canFallback = false)
+        val text = service.performRememberThis()
+        return PhaseResult.Success("Saved to memory: \"${text.take(40)}\"")
+    }
+
+    private fun activateMode(modeName: String): PhaseResult<String> {
+        val result = modeEngine.activateMode(modeName)
+        return PhaseResult.Success(result)
+    }
+
+    // ─── Core Actions ─────────────────────────────────────────────────
 
     private fun wifiOn(): PhaseResult<String> {
         val intent = Intent(Settings.Panel.ACTION_WIFI).apply {
@@ -82,8 +161,6 @@ class ExecutionController(private val context: Context) {
         context.startActivity(intent)
         return PhaseResult.Success("WiFi settings opened")
     }
-
-    // ─── Bluetooth ────────────────────────────────────────────────────
 
     private fun bluetoothOn(): PhaseResult<String> {
         return try {
@@ -115,8 +192,6 @@ class ExecutionController(private val context: Context) {
         }
     }
 
-    // ─── Volume ───────────────────────────────────────────────────────
-
     private fun volumeUp(): PhaseResult<String> {
         audioManager.adjustStreamVolume(
             AudioManager.STREAM_MUSIC,
@@ -134,8 +209,6 @@ class ExecutionController(private val context: Context) {
         )
         return PhaseResult.Success("Volume decreased")
     }
-
-    // ─── Silent / Ringer ──────────────────────────────────────────────
 
     private fun silentMode(): PhaseResult<String> {
         return try {
@@ -164,8 +237,6 @@ class ExecutionController(private val context: Context) {
         return PhaseResult.Success("Ringer on")
     }
 
-    // ─── Flashlight ───────────────────────────────────────────────────
-
     private fun flashlightOn(): PhaseResult<String> {
         return try {
             val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -185,8 +256,6 @@ class ExecutionController(private val context: Context) {
             PhaseResult.Failure("Flashlight failed: ${e.message}", canFallback = false)
         }
     }
-
-    // ─── Brightness ───────────────────────────────────────────────────
 
     private fun brightnessUp(): PhaseResult<String> {
         return try {
@@ -227,8 +296,6 @@ class ExecutionController(private val context: Context) {
         }
     }
 
-    // ─── System settings ──────────────────────────────────────────────
-
     private fun airplaneSettings(): PhaseResult<String> {
         val intent = Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -254,19 +321,12 @@ class ExecutionController(private val context: Context) {
     }
 
     private fun screenshot(): PhaseResult<String> {
-        // MediaProjection requires runtime permission — open settings as fallback
         return PhaseResult.Success("Use your phone's screenshot shortcut (Power + Volume Down)")
     }
 
     private fun lockPhone(): PhaseResult<String> {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Use device admin or accessibility service
-        }
         return PhaseResult.Success("Lock phone — enable Device Admin in settings")
     }
-
-    // ─── Media ────────────────────────────────────────────────────────
 
     private fun sendMediaKey(keyCode: Int): PhaseResult<String> {
         val event = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
@@ -278,8 +338,6 @@ class ExecutionController(private val context: Context) {
     private fun pauseMusic() = sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
     private fun nextTrack() = sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
     private fun prevTrack() = sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
-
-    // ─── Open App ─────────────────────────────────────────────────────
 
     private fun openApp(appName: String): PhaseResult<String> {
         val packageMap = mapOf(
@@ -316,7 +374,6 @@ class ExecutionController(private val context: Context) {
 
         val pkg = packageMap[appName.lowercase().trim()]
             ?: run {
-                // Try to find by app name search
                 val pm = context.packageManager
                 val intent = pm.getLaunchIntentForPackage(appName.lowercase())
                 if (intent != null) {
@@ -341,8 +398,6 @@ class ExecutionController(private val context: Context) {
             PhaseResult.Failure("Failed to open $appName", canFallback = false)
         }
     }
-
-    // ─── Alarm & Timer ────────────────────────────────────────────────
 
     private fun setAlarm(params: Map<String, String>): PhaseResult<String> {
         return try {
@@ -394,10 +449,8 @@ class ExecutionController(private val context: Context) {
         Regex("(\\d+)\\s*(second|sec|s)", RegexOption.IGNORE_CASE).find(duration)?.let {
             seconds += (it.groupValues[1].toIntOrNull() ?: 0)
         }
-        return if (seconds == 0) 600 else seconds // default 10 min
+        return if (seconds == 0) 600 else seconds
     }
-
-    // ─── Navigation ───────────────────────────────────────────────────
 
     private fun navigate(destination: String): PhaseResult<String> {
         return try {
@@ -409,7 +462,6 @@ class ExecutionController(private val context: Context) {
             context.startActivity(intent)
             PhaseResult.Success("Navigation started to $destination")
         } catch (e: Exception) {
-            // Fallback: open maps with search
             val uri = Uri.parse("geo:0,0?q=${Uri.encode(destination)}")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -418,8 +470,6 @@ class ExecutionController(private val context: Context) {
             PhaseResult.Success("Maps opened for $destination")
         }
     }
-
-    // ─── Call ─────────────────────────────────────────────────────────
 
     private fun callContact(contact: String): PhaseResult<String> {
         return try {

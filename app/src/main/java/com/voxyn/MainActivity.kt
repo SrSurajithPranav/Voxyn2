@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.voxyn.overlay.OverlayService
 import com.voxyn.ui.MainScreen
 import com.voxyn.ui.theme.VoxynBg
 import com.voxyn.ui.theme.VoxynTheme
@@ -21,6 +22,10 @@ import com.voxyn.utils.VoxynLogger
 import com.voxyn.wake.WakeWordService
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        private const val OVERLAY_PERMISSION_REQUEST = 1001
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -48,6 +53,14 @@ class MainActivity : ComponentActivity() {
         requestPermissions()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Check overlay permission every time app comes to foreground
+        if (Settings.canDrawOverlays(this)) {
+            startOverlayService()
+        }
+    }
+
     private fun requestPermissions() {
         val needed = mutableListOf<String>()
 
@@ -68,9 +81,16 @@ class MainActivity : ComponentActivity() {
             startVoxynServices()
         }
 
-        // Request overlay permission separately (needs special flow)
+        // Always request overlay permission — it's needed for DynamicIsland
         if (!Settings.canDrawOverlays(this)) {
-            VoxynLogger.w("Overlay permission not granted — ask user", "MAIN")
+            VoxynLogger.w("Requesting overlay permission for DynamicIsland", "MAIN")
+            val overlayIntent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(overlayIntent)
+        } else {
+            startOverlayService()
         }
     }
 
@@ -81,8 +101,20 @@ class MainActivity : ComponentActivity() {
                     action = WakeWordService.ACTION_START
                 }
             )
+            VoxynLogger.i("WakeWordService started", "MAIN")
         } catch (e: Exception) {
             VoxynLogger.e("Service start failed: ${e.message}", tag = "MAIN")
+        }
+    }
+
+    private fun startOverlayService() {
+        try {
+            startForegroundService(
+                Intent(this, OverlayService::class.java)
+            )
+            VoxynLogger.i("OverlayService started", "MAIN")
+        } catch (e: Exception) {
+            VoxynLogger.e("OverlayService start failed: ${e.message}", tag = "MAIN")
         }
     }
 }

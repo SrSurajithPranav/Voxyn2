@@ -42,18 +42,18 @@ class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
 
     private fun handleEvent(event: PipelineEvent) {
         val log = when (event) {
-            is PipelineEvent.PhaseStarted         -> "▶ ${event.phase.name}"
-            is PipelineEvent.PhaseCompleted       -> "✓ ${event.phase.name}: ${event.summary}"
-            is PipelineEvent.PhaseFailed          -> "✗ ${event.phase.name}: ${event.error}"
-            is PipelineEvent.DecisionMade         -> "⚡ Decision: ${event.state::class.simpleName}"
-            is PipelineEvent.ExecutionStepStarted -> "→ ${event.step.description}"
-            is PipelineEvent.ExecutionStepCompleted -> "✓ ${event.result}"
-            is PipelineEvent.VerificationResult   -> "🔍 ${event.outcome::class.simpleName}"
-            is PipelineEvent.EngineInterrupted    -> "⛔ ${event.reason}"
-            is PipelineEvent.ClarificationRequired -> "❓ ${event.missing.firstOrNull()}"
-            is PipelineEvent.ConfirmationRequired  -> "⚠️ Confirm: ${event.intent.action}"
-            is PipelineEvent.TrustScoreUpdated     -> "📊 Trust[${event.action}]: ${event.score}"
-            is PipelineEvent.PipelineComplete      -> "🎯 Done"
+            is PipelineEvent.PhaseStarted            -> "▶ ${event.phase.name}"
+            is PipelineEvent.PhaseCompleted          -> "✓ ${event.phase.name}: ${event.summary}"
+            is PipelineEvent.PhaseFailed             -> "✗ ${event.phase.name}: ${event.error}"
+            is PipelineEvent.DecisionMade            -> "⚡ Decision: ${event.state::class.simpleName}"
+            is PipelineEvent.ExecutionStepStarted    -> "→ ${event.step.description}"
+            is PipelineEvent.ExecutionStepCompleted   -> "✓ ${event.result}"
+            is PipelineEvent.VerificationResult      -> "🔍 ${event.outcome::class.simpleName}"
+            is PipelineEvent.EngineInterrupted       -> "⛔ ${event.reason}"
+            is PipelineEvent.ClarificationRequired   -> "❓ ${event.missing.firstOrNull()}"
+            is PipelineEvent.ConfirmationRequired     -> "⚠️ Confirm: ${event.intent.action}"
+            is PipelineEvent.TrustScoreUpdated        -> "📊 Trust[${event.action}]: ${event.score}"
+            is PipelineEvent.PipelineComplete         -> "🎯 Done"
         }
 
         _state.update { s ->

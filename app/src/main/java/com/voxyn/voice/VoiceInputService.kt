@@ -50,8 +50,9 @@ class VoiceInputService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_LISTENING -> handler.postDelayed({ startListening() }, 200)
+            ACTION_START_LISTENING -> handler.postDelayed({ startListening() }, 200L)
             ACTION_STOP_LISTENING  -> finishAndHandoff(null)
+            else                   -> handler.postDelayed({ startListening() }, 200L)
         }
         return START_NOT_STICKY
     }
@@ -79,7 +80,7 @@ class VoiceInputService : Service() {
         requestAudioFocus()
         destroyRecognizer()
 
-        // Fix for OxygenOS / MIUI: explicitly target Google's STT service
+        // Target Google STT explicitly
         recognizer = try {
             SpeechRecognizer.createSpeechRecognizer(
                 this,
@@ -101,6 +102,7 @@ class VoiceInputService : Service() {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
         }
@@ -134,8 +136,8 @@ class VoiceInputService : Service() {
     }
 
     private fun destroyRecognizer() {
-        try { recognizer?.stopListening() }  catch (_: Exception) {}
-        try { recognizer?.destroy() }        catch (_: Exception) {}
+        try { recognizer?.stopListening() } catch (_: Exception) {}
+        try { recognizer?.destroy() }       catch (_: Exception) {}
         recognizer = null
         isActive   = false
     }
