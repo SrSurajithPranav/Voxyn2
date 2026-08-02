@@ -6,7 +6,6 @@ import android.content.Intent
 import android.provider.Settings
 import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -14,17 +13,6 @@ class BootReceiver : BroadcastReceiver() {
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         VoxynLogger.i("Boot complete — restarting VOXYN services", "BOOT")
-
-        try {
-            context.startForegroundService(
-                Intent(context, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_START
-                }
-            )
-            VoxynLogger.i("WakeWordService started on boot", "BOOT")
-        } catch (e: Exception) {
-            VoxynLogger.e("Boot WakeWordService start failed: ${e.message}", tag = "BOOT")
-        }
 
         if (Settings.canDrawOverlays(context)) {
             try {

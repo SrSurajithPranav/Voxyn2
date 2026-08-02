@@ -8,3 +8,22 @@
 .externalNativeBuild
 .cxx
 local.properties
+# Gradle
+.gradle/
+.gradle-user/
+build/
+**/build/
+
+# Local config
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

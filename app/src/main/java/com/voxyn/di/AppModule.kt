@@ -1,8 +1,8 @@
 package com.voxyn.di
 
-import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.execution.ExecutionController
+import com.voxyn.execution.AppLaunchResolver
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
@@ -35,15 +35,10 @@ val appModule = module {
 
     // ── Execution ─────────────────────────────────────────────────────
     // ExecutionController depends on: context, ModeEngine
-    single { ExecutionController(androidContext(), get()) }
+    single { AppLaunchResolver(androidContext()) }
+    single { ExecutionController(androidContext(), get(), get()) }
 
     // ── AI ────────────────────────────────────────────────────────────
-    single {
-        ClaudeIntentResolver(
-            "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"
-        )
-    }
-
     // ── Engine ────────────────────────────────────────────────────────
     // VoxynEngine depends on: scope, context, memory, intentRouter, executor, tts, claudeResolver, modeEngine
     single {
@@ -54,7 +49,7 @@ val appModule = module {
             intentRouter   = get(),
             executor       = get(),
             tts            = get(),
-            claudeResolver = get(),
+            claudeResolver = null,
             modeEngine     = get()
         )
     }

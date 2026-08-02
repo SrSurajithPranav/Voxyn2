@@ -19,7 +19,8 @@ import com.voxyn.utils.VoxynLogger
 
 class ExecutionController(
     private val context: Context,
-    private val modeEngine: ModeEngine
+    private val modeEngine: ModeEngine,
+    private val appLaunchResolver: AppLaunchResolver
 ) {
 
     private val audioManager by lazy {
@@ -66,7 +67,7 @@ class ExecutionController(
                 "PAUSE_MUSIC"      -> pauseMusic()
                 "NEXT_TRACK"       -> nextTrack()
                 "PREV_TRACK"       -> prevTrack()
-                "OPEN_APP"         -> openApp(step.params["app_name"] ?: "")
+                "OPEN_APP"         -> appLaunchResolver.launch(step.params["app_name"] ?: "")
                 "SET_ALARM"        -> setAlarm(step.params)
                 "SET_TIMER"        -> setTimer(step.params)
                 "NAVIGATE"         -> navigate(step.params["destination"] ?: step.params["destinations"] ?: "")

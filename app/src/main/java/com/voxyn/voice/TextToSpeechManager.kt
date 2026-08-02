@@ -9,6 +9,7 @@ class TextToSpeechManager(context: Context) {
 
     private var tts: TextToSpeech? = null
     private var isReady = false
+    private var pendingSpeech: String? = null
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -18,6 +19,10 @@ class TextToSpeechManager(context: Context) {
                 tts?.setPitch(1.0f)
                 isReady = true
                 VoxynLogger.i("TTS ready", "TTS")
+                pendingSpeech?.let {
+                    pendingSpeech = null
+                    speakNow(it)
+                }
             } else {
                 VoxynLogger.e("TTS init failed: $status", tag = "TTS")
             }
@@ -25,7 +30,16 @@ class TextToSpeechManager(context: Context) {
     }
 
     fun speak(text: String) {
-        if (!isReady || text.isBlank()) return
+        if (text.isBlank()) return
+        if (!isReady) {
+            pendingSpeech = text
+            VoxynLogger.d("TTS not ready; response queued", "TTS")
+            return
+        }
+        speakNow(text)
+    }
+
+    private fun speakNow(text: String) {
         VoxynLogger.i("TTS: \"$text\"", "TTS")
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voxyn_${System.currentTimeMillis()}")
     }
@@ -37,5 +51,6 @@ class TextToSpeechManager(context: Context) {
         tts?.shutdown()
         tts = null
         isReady = false
+        pendingSpeech = null
     }
 }

@@ -19,6 +19,7 @@ import com.voxyn.ui.MainScreen
 import com.voxyn.ui.theme.VoxynBg
 import com.voxyn.ui.theme.VoxynTheme
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.voice.VoiceInputService
 import com.voxyn.wake.WakeWordService
 
 class MainActivity : ComponentActivity() {
@@ -45,7 +46,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = VoxynBg
                 ) {
-                    MainScreen()
+                    MainScreen(onStartVoiceInput = ::startVoiceInput)
                 }
             }
         }
@@ -95,15 +96,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVoxynServices() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            VoxynLogger.w("Microphone permission is required before starting voice services", "MAIN")
+            return
+        }
+        startForegroundService(Intent(this, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_START
+        })
+    }
+
+    private fun startVoiceInput() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions()
+            return
+        }
         try {
             startForegroundService(
-                Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_START
+                Intent(this, VoiceInputService::class.java).apply {
+                    action = VoiceInputService.ACTION_START_LISTENING
                 }
             )
-            VoxynLogger.i("WakeWordService started", "MAIN")
         } catch (e: Exception) {
-            VoxynLogger.e("Service start failed: ${e.message}", tag = "MAIN")
+            VoxynLogger.e("Voice input start failed: ${e.message}", tag = "MAIN")
         }
     }
 

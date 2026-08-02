@@ -60,7 +60,9 @@ class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
             s.copy(
                 logs = s.logs + log,
                 isRunning = event !is PipelineEvent.PipelineComplete
-                    && event !is PipelineEvent.EngineInterrupted,
+                    && event !is PipelineEvent.EngineInterrupted
+                    && event !is PipelineEvent.ClarificationRequired
+                    && event !is PipelineEvent.ConfirmationRequired,
                 currentPhase = when (event) {
                     is PipelineEvent.PhaseStarted -> event.phase
                     is PipelineEvent.PipelineComplete, is PipelineEvent.EngineInterrupted -> null

@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
@@ -19,9 +18,9 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.voxyn.MainActivity
+import com.voxyn.wake.WakeWordService
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
 import org.koin.android.ext.android.inject
 
 class VoiceInputService : Service() {
@@ -80,18 +79,14 @@ class VoiceInputService : Service() {
         requestAudioFocus()
         destroyRecognizer()
 
-        // Target Google STT explicitly
+        // Use the device-configured recognizer. Hard-coding Google's private
+        // component makes voice input fail on non-Google Android distributions.
         recognizer = try {
-            SpeechRecognizer.createSpeechRecognizer(
-                this,
-                ComponentName(
-                    "com.google.android.googlequicksearchbox",
-                    "com.google.android.voicesearch.serviceapi.GoogleRecognitionService"
-                )
-            )
-        } catch (e: Exception) {
-            VoxynLogger.w("Google STT unavailable, using default: ${e.message}", "VOICE")
             SpeechRecognizer.createSpeechRecognizer(this)
+        } catch (e: Exception) {
+            VoxynLogger.e("Unable to create speech recognizer: ${e.message}", tag = "VOICE")
+            finishAndHandoff(null)
+            return
         }
 
         recognizer?.setRecognitionListener(listener)
@@ -143,19 +138,17 @@ class VoiceInputService : Service() {
     }
 
     private fun finishAndHandoff(result: String?) {
+        // The recognizer owns transient audio focus. Release it before the
+        // pipeline can produce its spoken response, and do not restart it.
+        releaseAudioFocus()
+        destroyRecognizer()
         if (result != null) {
             VoxynLogger.i("Voice → Engine: \"$result\"", "VOICE")
             engine.process(result)
         }
-        releaseAudioFocus()
-        destroyRecognizer()
-        try {
-            startService(Intent(this, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_RESUME
-            })
-        } catch (e: Exception) {
-            VoxynLogger.e("Resume WakeWordService failed: ${e.message}", tag = "VOICE")
-        }
+        startForegroundService(Intent(this, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_START
+        })
         stopSelf()
     }
 

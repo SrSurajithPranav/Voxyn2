@@ -9,6 +9,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,7 +30,10 @@ private val WARN_COLOR    = Color(0xFFFFAB00)
 private val DIM_COLOR     = Color(0xFF546E7A)
 
 @Composable
-fun MainScreen(viewModel: VoxynViewModel = koinViewModel()) {
+fun MainScreen(
+    onStartVoiceInput: () -> Unit,
+    viewModel: VoxynViewModel = koinViewModel()
+) {
     val state by viewModel.state.collectAsState()
     var input by remember { mutableStateOf("") }
 
@@ -56,6 +61,7 @@ fun MainScreen(viewModel: VoxynViewModel = koinViewModel()) {
                         input = ""
                     }
                 },
+                onStartVoiceInput = onStartVoiceInput,
                 onInterrupt = { viewModel.interrupt() }
             )
         }
@@ -157,6 +163,7 @@ fun CommandInput(
     isRunning: Boolean,
     onValueChange: (String) -> Unit,
     onSubmit: () -> Unit,
+    onStartVoiceInput: () -> Unit,
     onInterrupt: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -187,6 +194,14 @@ fun CommandInput(
             ) {
                 Text("EXECUTE", color = VoxynBg, fontWeight = FontWeight.Black,
                     letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
+            }
+            OutlinedButton(
+                onClick = onStartVoiceInput,
+                enabled = !isRunning,
+                border = BorderStroke(1.dp, VoxynCyan),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.Mic, contentDescription = "Start voice input", tint = VoxynCyan)
             }
             if (isRunning) {
                 OutlinedButton(
