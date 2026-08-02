@@ -59,8 +59,12 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
+<<<<<<< HEAD
     implementation(libs.vosk.android)
     implementation(libs.vosk.model.en)
+=======
+    implementation("com.alphacephei:vosk-android:0.3.75")
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }

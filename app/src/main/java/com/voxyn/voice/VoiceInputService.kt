@@ -30,14 +30,34 @@ class VoiceInputService : Service() {
         const val ACTION_STOP_LISTENING  = "com.voxyn.voice.STOP_LISTENING"
         const val CHANNEL_ID             = "voxyn_voice"
         const val NOTIFICATION_ID        = 3002
+        const val EXTRA_RESUME_WAKE_AFTER_FINISH = "extra_resume_wake_after_finish"
+        const val EXTRA_FOLLOW_UP_MODE = "extra_follow_up_mode"
+        const val EXTRA_INITIAL_TIMEOUT_MS = "extra_initial_timeout_ms"
+        const val EXTRA_SILENCE_COMPLETE_MS = "extra_silence_complete_ms"
     }
 
     private val engine: VoxynEngine by inject()
+    private val tts: TextToSpeechManager by inject()
     private var recognizer: SpeechRecognizer? = null
     private var isActive = false
     private val handler = Handler(Looper.getMainLooper())
+<<<<<<< HEAD
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+=======
+    private var resumeWakeAfterFinish = true
+    private var followUpMode = false
+    private var initialTimeoutMs = 5_000L
+    private var completeSilenceMs = 1_500L
+    private var speechHeard = false
+
+    private val initialTimeoutRunnable = Runnable {
+        if (!speechHeard && isActive) {
+            VoxynLogger.i("Initial silence timeout reached", "VOICE")
+            finishAndHandoff(null)
+        }
+    }
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +68,11 @@ class VoiceInputService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        resumeWakeAfterFinish = intent?.getBooleanExtra(EXTRA_RESUME_WAKE_AFTER_FINISH, true) ?: true
+        followUpMode = intent?.getBooleanExtra(EXTRA_FOLLOW_UP_MODE, false) ?: false
+        initialTimeoutMs = intent?.getLongExtra(EXTRA_INITIAL_TIMEOUT_MS, 5_000L) ?: 5_000L
+        completeSilenceMs = intent?.getLongExtra(EXTRA_SILENCE_COMPLETE_MS, 1_500L) ?: 1_500L
+
         when (intent?.action) {
             ACTION_START_LISTENING -> handler.postDelayed({ startListening() }, 200L)
             ACTION_STOP_LISTENING  -> finishAndHandoff(null)
@@ -57,6 +82,7 @@ class VoiceInputService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+<<<<<<< HEAD
 
     override fun onDestroy() {
         releaseAudioFocus()
@@ -70,6 +96,17 @@ class VoiceInputService : Service() {
     private fun startListening() {
         if (isActive) return
 
+=======
+    override fun onDestroy() {
+        destroyRecognizer()
+        handler.removeCallbacks(initialTimeoutRunnable)
+        super.onDestroy()
+    }
+
+    private fun startListening() {
+        if (isActive) return
+        tts.stop()
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             VoxynLogger.e("SpeechRecognizer unavailable", tag = "VOICE")
             finishAndHandoff(null)
@@ -78,6 +115,7 @@ class VoiceInputService : Service() {
 
         requestAudioFocus()
         destroyRecognizer()
+<<<<<<< HEAD
 
         // Use the device-configured recognizer. Hard-coding Google's private
         // component makes voice input fail on non-Google Android distributions.
@@ -87,6 +125,11 @@ class VoiceInputService : Service() {
             VoxynLogger.e("Unable to create speech recognizer: ${e.message}", tag = "VOICE")
             finishAndHandoff(null)
             return
+=======
+        speechHeard = false
+        recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            setRecognitionListener(listener)
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         }
 
         recognizer?.setRecognitionListener(listener)
@@ -96,15 +139,21 @@ class VoiceInputService : Service() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+<<<<<<< HEAD
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+=======
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilenceMs)
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         }
 
         try {
             recognizer?.startListening(intent)
             isActive = true
+            handler.removeCallbacks(initialTimeoutRunnable)
+            handler.postDelayed(initialTimeoutRunnable, initialTimeoutMs)
             updateNotification("Listening... speak your command")
             VoxynLogger.i("Recognition started", "VOICE")
         } catch (e: Exception) {
@@ -131,6 +180,7 @@ class VoiceInputService : Service() {
     }
 
     private fun destroyRecognizer() {
+<<<<<<< HEAD
         try { recognizer?.stopListening() } catch (_: Exception) {}
         try { recognizer?.destroy() }       catch (_: Exception) {}
         recognizer = null
@@ -142,25 +192,60 @@ class VoiceInputService : Service() {
         // pipeline can produce its spoken response, and do not restart it.
         releaseAudioFocus()
         destroyRecognizer()
+=======
+        handler.removeCallbacks(initialTimeoutRunnable)
+        try { recognizer?.stopListening(); recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = null; isActive = false
+    }
+
+    private fun finishAndHandoff(result: String?) {
+        handler.removeCallbacks(initialTimeoutRunnable)
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         if (result != null) {
             VoxynLogger.i("Voice → Engine: \"$result\"", "VOICE")
             engine.process(result)
         }
+<<<<<<< HEAD
         startForegroundService(Intent(this, WakeWordService::class.java).apply {
             action = WakeWordService.ACTION_START
         })
+=======
+        destroyRecognizer()
+        if (followUpMode && result.isNullOrBlank()) {
+            engine.onFollowUpTimeout()
+        } else if (resumeWakeAfterFinish) {
+            try {
+                startService(Intent(this, WakeWordService::class.java).apply {
+                    action = WakeWordService.ACTION_RESUME
+                })
+            } catch (e: Exception) {
+                VoxynLogger.e("Resume WakeWordService failed: ${e.message}", tag = "VOICE")
+            }
+        }
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         stopSelf()
     }
 
     // ─── Listener ─────────────────────────────────────────────────────
 
     private val listener = object : RecognitionListener {
+<<<<<<< HEAD
         override fun onReadyForSpeech(params: Bundle?) {
             VoxynLogger.d("Ready for speech", "VOICE")
         }
         override fun onBeginningOfSpeech() { updateNotification("Hearing you...") }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
+=======
+        override fun onReadyForSpeech(p: Bundle?) {}
+        override fun onBeginningOfSpeech() {
+            speechHeard = true
+            handler.removeCallbacks(initialTimeoutRunnable)
+            updateNotification("Hearing you...")
+        }
+        override fun onRmsChanged(r: Float) {}
+        override fun onBufferReceived(b: ByteArray?) {}
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         override fun onEndOfSpeech() { updateNotification("Processing..."); isActive = false }
         override fun onError(error: Int) {
             val msg = when (error) {

@@ -44,7 +44,12 @@ class TextToSpeechManager(context: Context) {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voxyn_${System.currentTimeMillis()}")
     }
 
-    fun stop() { tts?.stop() }
+    fun stop() {
+        if (tts != null) {
+            VoxynLogger.i("TTS stop requested", "TTS")
+            tts?.stop()
+        }
+    }
 
     fun shutdown() {
         tts?.stop()

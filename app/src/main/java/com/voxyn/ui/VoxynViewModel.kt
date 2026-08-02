@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.voxyn.core.PipelineEvent
 import com.voxyn.core.PipelinePhase
 import com.voxyn.engine.VoxynEngine
+import com.voxyn.wake.VoskModelManager
+import com.voxyn.wake.VoskModelState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,17 +17,34 @@ data class VoxynUiState(
     val logs: List<String> = emptyList(),
     val isRunning: Boolean = false,
     val currentPhase: PipelinePhase? = null,
+<<<<<<< HEAD
     val partialText: String = ""
+=======
+    val partialText: String = "",
+    val awaitingConfirmation: Boolean = false,
+    val modelState: VoskModelState = VoskModelState.Uninitialized
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 )
 
-class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
+class VoxynViewModel(
+    private val engine: VoxynEngine,
+    private val modelManager: VoskModelManager
+) : ViewModel() {
 
     private val _state = MutableStateFlow(VoxynUiState())
     val state: StateFlow<VoxynUiState> = _state.asStateFlow()
 
     init {
+        modelManager.ensureModelAvailable()
+
         viewModelScope.launch {
             engine.events.collect { event -> handleEvent(event) }
+        }
+
+        viewModelScope.launch {
+            modelManager.modelState.collect { state ->
+                _state.update { it.copy(modelState = state) }
+            }
         }
     }
 
@@ -38,6 +57,10 @@ class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
     fun interrupt() {
         engine.interrupt("User cancelled")
         _state.update { it.copy(isRunning = false) }
+    }
+
+    fun retryModelDownload() {
+        modelManager.retryModelSetup()
     }
 
     private fun handleEvent(event: PipelineEvent) {

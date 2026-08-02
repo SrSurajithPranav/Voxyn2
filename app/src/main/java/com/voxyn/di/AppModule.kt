@@ -9,6 +9,7 @@ import com.voxyn.mode.ModeEngine
 import com.voxyn.perception.ContextEngine
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.voice.TextToSpeechManager
+import com.voxyn.wake.VoskModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,7 @@ val appModule = module {
 
     // ── Voice & TTS ───────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
+    single { VoskModelManager(androidContext()) }
 
     // ── Intent ────────────────────────────────────────────────────────
     single { IntentRouter() }
@@ -44,7 +46,11 @@ val appModule = module {
     single {
         VoxynEngine(
             scope          = get(),
+<<<<<<< HEAD
             context        = androidContext(),
+=======
+            appContext     = androidContext(),
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
             memory         = get(),
             intentRouter   = get(),
             executor       = get(),
@@ -54,6 +60,10 @@ val appModule = module {
         )
     }
 
+<<<<<<< HEAD
     // ── UI ────────────────────────────────────────────────────────────
     viewModel { VoxynViewModel(engine = get()) }
+=======
+    viewModel { VoxynViewModel(engine = get(), modelManager = get()) }
+>>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 }
