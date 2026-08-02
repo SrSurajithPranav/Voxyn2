@@ -1,0 +1,45 @@
+package com.voxyn.memory
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.voxyn.utils.VoxynLogger
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "voxyn_memory")
+
+class MemoryRepository(private val context: Context) {
+
+    suspend fun getTrustScore(action: String): Float {
+        val success = getInt("${action}_success")
+        val failure = getInt("${action}_failure")
+        val total = success + failure
+        return if (total == 0) 0.5f
+        else (success.toFloat() / total).coerceIn(0.1f, 0.95f)
+    }
+
+    suspend fun recordOutcome(action: String, success: Boolean) {
+        val key = if (success) "${action}_success" else "${action}_failure"
+        val current = getInt(key)
+        setInt(key, current + 1)
+        VoxynLogger.i(
+            "Memory: $action ${if (success) "✓" else "✗"} " +
+            "trust=${getTrustScore(action)}", "MEMORY"
+        )
+    }
+
+    private suspend fun getInt(key: String): Int {
+        return context.dataStore.data.first()[intPreferencesKey(key)] ?: 0
+    }
+
+    private suspend fun setInt(key: String, value: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[intPreferencesKey(key)] = value
+        }
+    }
+}
