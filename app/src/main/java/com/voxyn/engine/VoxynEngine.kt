@@ -58,9 +58,9 @@ class VoxynEngine(
         "never mind", "nevermind", "don't", "dont")
 >>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 
-    fun process(input: String) {
+    fun process(input: String): Job {
         activeJob?.cancel()
-        activeJob = scope.launch { runPipeline(input) }
+        return scope.launch { runPipeline(input) }.also { activeJob = it }
     }
 
     fun interrupt(reason: String = "Interrupted") {
@@ -252,7 +252,7 @@ class VoxynEngine(
         setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
 
         val speech = claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
-        tts.speak(speech)
+        tts.speakAndAwait(speech)
 
         phase(PipelinePhase.LEARN) { learn(intent, outcome) }
         pendingInput = null
@@ -260,7 +260,6 @@ class VoxynEngine(
 <<<<<<< HEAD
         VoxynLogger.i("✓ Pipeline complete", "ENGINE")
 
-        delay(1500L)
         setOverlay("IDLE")
 =======
 
@@ -338,12 +337,11 @@ class VoxynEngine(
         val outcome = VerificationOutcome.Success
         emit(PipelineEvent.VerificationResult(outcome))
         setOverlay("SUCCESS", "Chain complete")
-        tts.speak("Sequence completed.")
+        tts.speakAndAwait("Sequence completed.")
         pendingInput = null
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Chain execution completed successfully", "ENGINE")
 
-        delay(1500L)
         setOverlay("IDLE")
     }
 

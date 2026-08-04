@@ -192,6 +192,7 @@ class VoiceInputService : Service() {
         // pipeline can produce its spoken response, and do not restart it.
         releaseAudioFocus()
         destroyRecognizer()
+<<<<<<< HEAD
 =======
         handler.removeCallbacks(initialTimeoutRunnable)
         try { recognizer?.stopListening(); recognizer?.destroy() } catch (_: Exception) {}
@@ -224,6 +225,25 @@ class VoiceInputService : Service() {
         }
 >>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         stopSelf()
+=======
+        if (result == null) {
+            resumeWakeWordService()
+            stopSelf()
+            return
+        }
+
+        VoxynLogger.i("Voice → Engine: \"$result\"", "VOICE")
+        engine.process(result).invokeOnCompletion {
+            resumeWakeWordService()
+            stopSelf()
+        }
+    }
+
+    private fun resumeWakeWordService() {
+        startForegroundService(Intent(this, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_START
+        })
+>>>>>>> 3c8c811 (fixed)
     }
 
     // ─── Listener ─────────────────────────────────────────────────────

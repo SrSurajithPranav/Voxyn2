@@ -3,6 +3,8 @@ package com.voxyn.di
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.execution.ExecutionController
 import com.voxyn.execution.AppLaunchResolver
+import com.voxyn.execution.Capability
+import com.voxyn.execution.CapabilityRegistry
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
@@ -39,6 +41,7 @@ val appModule = module {
     // ExecutionController depends on: context, ModeEngine
     single { AppLaunchResolver(androidContext()) }
     single { ExecutionController(androidContext(), get(), get()) }
+    single { CapabilityRegistry(getAll<Capability>()) }
 
     // ── AI ────────────────────────────────────────────────────────────
     // ── Engine ────────────────────────────────────────────────────────

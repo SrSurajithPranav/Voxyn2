@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceInputService
@@ -39,12 +41,14 @@ class WakeWordService : Service(), RecognitionListener {
         private const val CHANNEL_ID = "voxyn_wake"
         private const val NOTIFICATION_ID = 3001
         private const val WAKE_PHRASE = "hey voxyn"
+        private const val RESTART_DELAY_MS = 1_000L
     }
 
 <<<<<<< HEAD
     private var speechService: SpeechService? = null
     private var model: Model? = null
     private var triggered = false
+<<<<<<< HEAD
 =======
     private val scope       = CoroutineScope(Dispatchers.Default + Job())
     private val modelManager: VoskModelManager by inject()
@@ -57,6 +61,10 @@ class WakeWordService : Service(), RecognitionListener {
     private var isWaiting   = false
     private val handler     = Handler(Looper.getMainLooper())
 >>>>>>> 2c02828 (WIP: Copilot improvements before sync)
+=======
+    @Volatile private var isServiceDestroyed = false
+    private val handler = Handler(Looper.getMainLooper())
+>>>>>>> 3c8c811 (fixed)
 
     override fun onCreate() {
         super.onCreate()
@@ -67,7 +75,7 @@ class WakeWordService : Service(), RecognitionListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopSelf()
-            else -> if (speechService == null && model == null) loadModel()
+            else -> resumeListening()
         }
         return START_STICKY
     }
@@ -78,11 +86,12 @@ class WakeWordService : Service(), RecognitionListener {
             "model-en-us",
             "voxyn-wake-model",
             { loaded ->
-                if (isDestroyed) return@unpack
+                if (isServiceDestroyed) {
+                    loaded.close()
+                    return@unpack
+                }
                 model = loaded
-                val recognizer = Recognizer(loaded, 16_000f, "[\"$WAKE_PHRASE\", \"[unk]\"]")
-                speechService = SpeechService(recognizer, 16_000f).also { it.startListening(this) }
-                VoxynLogger.i("Offline wake listener started", "WAKE")
+                startListening(loaded)
             },
             { error ->
                 VoxynLogger.e("Wake model unavailable: ${error.message}", tag = "WAKE")
@@ -99,27 +108,45 @@ class WakeWordService : Service(), RecognitionListener {
         if (triggered || !hypothesis.orEmpty().contains(WAKE_PHRASE, ignoreCase = true)) return
         triggered = true
         VoxynLogger.i("Wake phrase detected", "WAKE")
-        speechService?.stop()
+        pauseListening()
         startForegroundService(Intent(this, VoiceInputService::class.java).apply {
             action = VoiceInputService.ACTION_START_LISTENING
         })
-        stopSelf()
     }
 
     override fun onError(exception: Exception?) {
         VoxynLogger.e("Wake listener error: ${exception?.message}", tag = "WAKE")
-        stopSelf()
+        pauseListening()
+        handler.postDelayed(::resumeListening, RESTART_DELAY_MS)
     }
 
     override fun onTimeout() = Unit
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        speechService?.shutdown()
-        speechService = null
+        isServiceDestroyed = true
+        handler.removeCallbacksAndMessages(null)
+        pauseListening()
         model?.close()
         model = null
         super.onDestroy()
+    }
+
+    private fun resumeListening() {
+        if (isServiceDestroyed || speechService != null) return
+        model?.let(::startListening) ?: loadModel()
+    }
+
+    private fun startListening(loadedModel: Model) {
+        triggered = false
+        val recognizer = Recognizer(loadedModel, 16_000f, "[\"$WAKE_PHRASE\", \"[unk]\"]")
+        speechService = SpeechService(recognizer, 16_000f).also { it.startListening(this) }
+        VoxynLogger.i("Offline wake listener started", "WAKE")
+    }
+
+    private fun pauseListening() {
+        speechService?.shutdown()
+        speechService = null
     }
 
     private fun notification(text: String): Notification = Notification.Builder(this, CHANNEL_ID)
