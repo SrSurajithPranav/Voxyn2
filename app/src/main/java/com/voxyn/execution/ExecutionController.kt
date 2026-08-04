@@ -10,15 +10,12 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.provider.AlarmClock
-import android.provider.ContactsContract
 import android.provider.Settings
 import com.voxyn.core.ActionStep
 import com.voxyn.core.PhaseResult
 import com.voxyn.mode.ModeEngine
 import com.voxyn.perception.VoxynAccessibilityService
 import com.voxyn.utils.VoxynLogger
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 
 class ExecutionController(
     private val context: Context,
@@ -74,7 +71,6 @@ class ExecutionController(
                 "SET_ALARM"        -> setAlarm(step.params)
                 "SET_TIMER"        -> setTimer(step.params)
                 "NAVIGATE"         -> navigate(step.params["destination"] ?: step.params["destinations"] ?: "")
-                "SEND_MESSAGE"     -> sendMessage(step.params)
                 "CALL_CONTACT"     -> callContact(step.params["contact"] ?: "")
                 "LOCK_PHONE"       -> lockPhone()
                 "MODE_ACTIVATE"    -> activateMode(step.params["mode_name"] ?: "normal")
@@ -458,142 +454,24 @@ class ExecutionController(
     }
 
     private fun navigate(destination: String): PhaseResult<String> {
-        val stops = parseDestinations(destination)
-        if (stops.size > 1) {
-            return openMultiStopNavigation(stops)
-        }
-
-        val finalDestination = stops.firstOrNull().orEmpty()
         return try {
-            val uri = Uri.parse("google.navigation:q=${Uri.encode(finalDestination)}&mode=d")
+            val uri = Uri.parse("google.navigation:q=${Uri.encode(destination)}&mode=d")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 setPackage("com.google.android.apps.maps")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
-            PhaseResult.Success("Navigation started to $finalDestination")
+            PhaseResult.Success("Navigation started to $destination")
         } catch (e: Exception) {
-<<<<<<< HEAD
             val uri = Uri.parse("geo:0,0?q=${Uri.encode(destination)}")
-=======
-            // Fallback: open maps with search
-            val uri = Uri.parse("geo:0,0?q=${Uri.encode(finalDestination)}")
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
-            PhaseResult.Success("Maps opened for $finalDestination")
+            PhaseResult.Success("Maps opened for $destination")
         }
     }
 
-<<<<<<< HEAD
-=======
-    private fun openMultiStopNavigation(stops: List<String>): PhaseResult<String> {
-        return try {
-            val destination = stops.last()
-            val waypoints = stops.dropLast(1).joinToString("|") { Uri.encode(it) }
-            val mapsUrl = StringBuilder("https://www.google.com/maps/dir/?api=1")
-                .append("&origin=My+Location")
-                .append("&destination=").append(Uri.encode(destination))
-                .apply {
-                    if (waypoints.isNotBlank()) {
-                        append("&waypoints=").append(waypoints)
-                    }
-                }
-                .toString()
-
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(mapsUrl)).apply {
-                setPackage("com.google.android.apps.maps")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            PhaseResult.Success("Multi-stop navigation started")
-        } catch (e: Exception) {
-            PhaseResult.Failure("Failed to start multi-stop navigation", canFallback = true)
-        }
-    }
-
-    private fun parseDestinations(raw: String): List<String> {
-        return raw
-            .replace(Regex("\\s+and\\s+then\\s+", RegexOption.IGNORE_CASE), " then ")
-            .replace(Regex("\\s+then\\s+", RegexOption.IGNORE_CASE), "|")
-            .replace(",", "|")
-            .replace(" and ", "|")
-            .split("|")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-    }
-
-    // ─── Messaging ────────────────────────────────────────────────────
-
-    private fun sendMessage(params: Map<String, String>): PhaseResult<String> {
-        val message = params["message"]?.trim().orEmpty()
-        val contact = params["contact"]?.trim().orEmpty()
-        val platform = params["platform"]?.trim()?.lowercase().orEmpty()
-
-        if (message.isBlank()) return PhaseResult.Failure("Message body missing", canFallback = true)
-        if (contact.isBlank()) return PhaseResult.Failure("Contact missing", canFallback = true)
-
-        return when (platform) {
-            "whatsapp" -> sendWhatsAppMessage(contact, message)
-            "sms", "instagram", "" -> sendSmsMessage(contact, message)
-            else -> sendSmsMessage(contact, message)
-        }
-    }
-
-    private fun sendSmsMessage(contactOrNumber: String, message: String): PhaseResult<String> {
-        val recipient = resolvePhoneNumber(contactOrNumber) ?: contactOrNumber
-        return try {
-            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(recipient)}")).apply {
-                putExtra("sms_body", message)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            PhaseResult.Success("SMS prepared for $contactOrNumber")
-        } catch (e: Exception) {
-            PhaseResult.Failure("Failed to open SMS app", canFallback = true)
-        }
-    }
-
-    private fun sendWhatsAppMessage(contactOrNumber: String, message: String): PhaseResult<String> {
-        val number = resolvePhoneNumber(contactOrNumber) ?: contactOrNumber
-        val cleanedNumber = number.filter { it.isDigit() || it == '+' }
-        val encodedMessage = URLEncoder.encode(message, StandardCharsets.UTF_8.toString())
-
-        return try {
-            val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanedNumber&text=$encodedMessage")
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            PhaseResult.Success("WhatsApp message prepared for $contactOrNumber")
-        } catch (e: Exception) {
-            PhaseResult.Failure("Failed to open WhatsApp", canFallback = true)
-        }
-    }
-
-    private fun resolvePhoneNumber(contactName: String): String? {
-        if (contactName.any { it.isDigit() }) return contactName
-
-        val resolver = context.contentResolver
-        val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-        val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
-        val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
-        val args = arrayOf("%$contactName%")
-
-        return runCatching {
-            resolver.query(uri, projection, selection, args, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getString(0)
-                } else null
-            }
-        }.getOrNull()
-    }
-
-    // ─── Call ─────────────────────────────────────────────────────────
-
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     private fun callContact(contact: String): PhaseResult<String> {
         return try {
             val uri = Uri.parse("tel:$contact")

@@ -186,34 +186,11 @@ class IntentRouter {
 
         // ─── Navigation ────────────────────────────────────────────────
         IntentDef("NAVIGATE", 0.91f, listOf(
-<<<<<<< HEAD
             Regex("navigate\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("directions?\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("take\\s*me\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("how\\s*do\\s*i\\s*get\\s*to\\s*(.+)", RegexOption.IGNORE_CASE)
         ), paramExtractors = mapOf("destination" to 1)),
-=======
-            Regex("navigate\\s*(to)?\\s+(.+?)\\s+then\\s+(.+?)\\s+and\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("(visit|go to)\\s+(.+?)\\s+and\\s+then\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("navigate\\s*(to)?\\s+(.+?,.+)", RegexOption.IGNORE_CASE),
-            Regex("navigate\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-            Regex("(take|show|give)\\s*me\\s*(directions?|route)\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-            Regex("(go|directions?)\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-        )),
-
-        // ─── Messaging ─────────────────────────────────────────────────
-        IntentDef("SEND_MESSAGE", 0.92f, listOf(
-            Regex("message\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-            Regex("send\\s+text\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-            Regex("send\\s+message\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-        ), paramExtractors = mapOf("message" to 1, "contact" to 2, "platform" to 3)),
-
-        // ─── Call ──────────────────────────────────────────────────────
-        IntentDef("CALL_CONTACT", 0.90f, listOf(
-            Regex("call\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("(phone|ring|dial)\\s+(.+)", RegexOption.IGNORE_CASE),
-        ), paramExtractors = mapOf("contact" to 1)),
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 
         // ─── Mode System ───────────────────────────────────────────────
         IntentDef("MODE_ACTIVATE", 0.95f, listOf(
@@ -264,7 +241,6 @@ class IntentRouter {
                         }
                     }
                 }
-<<<<<<< HEAD
                 if (stepActions.size > 1) {
                     val jsonArray = JSONArray()
                     stepActions.forEach { jsonArray.put(it) }
@@ -273,27 +249,6 @@ class IntentRouter {
                         action = "CHAIN",
                         params = mapOf("steps" to jsonArray.toString()),
                         confidence = 0.95f,
-=======
-
-                if (intent.action == "NAVIGATE") {
-                    val destinations = extractDestinationsFromMatch(match.groupValues)
-                    if (destinations.isNotEmpty()) {
-                        params["destinations"] = destinations.joinToString("|")
-                        params["destination"] = destinations.last()
-                    }
-                }
-
-                if (intent.action == "SEND_MESSAGE") {
-                    params["platform"] = params["platform"]?.lowercase() ?: "sms"
-                }
-
-                if (intent.baseConfidence > bestConfidence) {
-                    bestConfidence = intent.baseConfidence
-                    bestMatch = IntentResult(
-                        action = intent.action,
-                        params = params,
-                        confidence = bestConfidence,
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
                         rawInput = perceived
                     )
                 }
@@ -363,20 +318,4 @@ class IntentRouter {
             params = intent.params
         )
     )
-
-    private fun extractDestinationsFromMatch(groups: List<String>): List<String> {
-        val combined = groups.drop(1)
-            .firstOrNull { it.contains("then", ignoreCase = true) || it.contains(",") }
-            ?: groups.drop(1).firstOrNull { it.isNotBlank() }
-            ?: return emptyList()
-
-        return combined
-            .replace(Regex("\\s+and\\s+then\\s+", RegexOption.IGNORE_CASE), " then ")
-            .replace(Regex("\\s+then\\s+", RegexOption.IGNORE_CASE), "|")
-            .replace(" and ", "|")
-            .replace(",", "|")
-            .split("|")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-    }
 }

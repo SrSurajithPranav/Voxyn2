@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.voxyn.ui.theme.*
-import com.voxyn.wake.VoskModelState
 import org.koin.androidx.compose.koinViewModel
 
 private val SUCCESS_COLOR = Color(0xFF00E676)
@@ -37,7 +36,6 @@ fun MainScreen(
 ) {
     val state by viewModel.state.collectAsState()
     var input by remember { mutableStateOf("") }
-    val isModelReady = state.modelState is VoskModelState.Ready
 
     Box(
         modifier = Modifier
@@ -51,20 +49,11 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Header(isRunning = state.isRunning, phase = state.currentPhase?.name)
-            ModelStateBanner(
-                modelState = state.modelState,
-                onRetry = { viewModel.retryModelDownload() }
-            )
             PhaseBar(currentPhase = state.currentPhase?.ordinal ?: -1, isRunning = state.isRunning)
             LogPanel(logs = state.logs, modifier = Modifier.weight(1f))
             CommandInput(
                 value = input,
                 isRunning = state.isRunning,
-<<<<<<< HEAD
-=======
-                modelReady = isModelReady,
-                awaitingConfirmation = state.awaitingConfirmation,
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
                 onValueChange = { input = it },
                 onSubmit = {
                     if (input.isNotBlank()) {
@@ -76,98 +65,6 @@ fun MainScreen(
                 onInterrupt = { viewModel.interrupt() }
             )
         }
-    }
-}
-
-@Composable
-fun ModelStateBanner(
-    modelState: VoskModelState,
-    onRetry: () -> Unit
-) {
-    when (modelState) {
-        is VoskModelState.Uninitialized -> {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = VoxynSurface,
-                border = BorderStroke(1.dp, DIM_COLOR.copy(alpha = 0.4f))
-            ) {
-                Text(
-                    "Preparing offline wake model...",
-                    color = VoxynText,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                )
-            }
-        }
-        is VoskModelState.Downloading, is VoskModelState.Extracting -> {
-            val progress = when (modelState) {
-                is VoskModelState.Downloading -> modelState.progress
-                is VoskModelState.Extracting -> modelState.progress
-                else -> 0f
-            }
-            val label = when (modelState) {
-                is VoskModelState.Downloading -> "Downloading offline model"
-                is VoskModelState.Extracting -> "Extracting offline model"
-                else -> "Preparing model"
-            }
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = VoxynSurface,
-                border = BorderStroke(1.dp, VoxynCyan.copy(alpha = 0.4f))
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "$label ${(progress * 100).toInt()}%",
-                        color = VoxynCyan,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = VoxynCyan,
-                        trackColor = DIM_COLOR.copy(alpha = 0.3f)
-                    )
-                }
-            }
-        }
-        is VoskModelState.Error -> {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = ERROR_COLOR.copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, ERROR_COLOR.copy(alpha = 0.5f))
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Offline model failed: ${modelState.message}",
-                        color = ERROR_COLOR,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    OutlinedButton(
-                        onClick = onRetry,
-                        border = BorderStroke(1.dp, ERROR_COLOR),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            "RETRY DOWNLOAD",
-                            color = ERROR_COLOR,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-            }
-        }
-        is VoskModelState.Ready -> Unit
     }
 }
 
@@ -264,37 +161,18 @@ fun LogPanel(logs: List<String>, modifier: Modifier = Modifier) {
 fun CommandInput(
     value: String,
     isRunning: Boolean,
-<<<<<<< HEAD
-=======
-    modelReady: Boolean,
-    awaitingConfirmation: Boolean,
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     onValueChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onStartVoiceInput: () -> Unit,
     onInterrupt: () -> Unit
 ) {
-<<<<<<< HEAD
-=======
-    val inputEnabled = modelReady && !isRunning
-
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             enabled = !isRunning,
             placeholder = {
-<<<<<<< HEAD
                 Text("enter command...", color = DIM_COLOR, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-=======
-                val hint = when {
-                    !modelReady -> "waiting for offline model..."
-                    awaitingConfirmation -> "type yes or no..."
-                    else -> "enter command..."
-                }
-                Text(hint, color = DIM_COLOR, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
             },
             textStyle = LocalTextStyle.current.copy(color = VoxynText, fontFamily = FontFamily.Monospace, fontSize = 13.sp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -317,7 +195,6 @@ fun CommandInput(
                 Text("EXECUTE", color = VoxynBg, fontWeight = FontWeight.Black,
                     letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
             }
-<<<<<<< HEAD
             OutlinedButton(
                 onClick = onStartVoiceInput,
                 enabled = !isRunning,
@@ -331,16 +208,6 @@ fun CommandInput(
                     onClick = onInterrupt,
                     border = BorderStroke(1.dp, ERROR_COLOR),
                     shape = RoundedCornerShape(10.dp)
-=======
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = onSubmit,
-                    enabled = modelReady && !isRunning && value.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = VoxynCyan),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.weight(1f)
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
                 ) {
                     Text("STOP", color = ERROR_COLOR, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                 }

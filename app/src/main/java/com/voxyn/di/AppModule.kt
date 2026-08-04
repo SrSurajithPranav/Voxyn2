@@ -3,13 +3,14 @@ package com.voxyn.di
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.execution.ExecutionController
 import com.voxyn.execution.AppLaunchResolver
+import com.voxyn.execution.Capability
+import com.voxyn.execution.CapabilityRegistry
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
 import com.voxyn.perception.ContextEngine
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.voice.TextToSpeechManager
-import com.voxyn.wake.VoskModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,7 +27,6 @@ val appModule = module {
 
     // ── Voice & TTS ───────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
-    single { VoskModelManager(androidContext()) }
 
     // ── Intent ────────────────────────────────────────────────────────
     single { IntentRouter() }
@@ -39,6 +39,7 @@ val appModule = module {
     // ExecutionController depends on: context, ModeEngine
     single { AppLaunchResolver(androidContext()) }
     single { ExecutionController(androidContext(), get(), get()) }
+    single { CapabilityRegistry(getAll<Capability>()) }
 
     // ── AI ────────────────────────────────────────────────────────────
     // ── Engine ────────────────────────────────────────────────────────
@@ -46,11 +47,7 @@ val appModule = module {
     single {
         VoxynEngine(
             scope          = get(),
-<<<<<<< HEAD
             context        = androidContext(),
-=======
-            appContext     = androidContext(),
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
             memory         = get(),
             intentRouter   = get(),
             executor       = get(),
@@ -60,10 +57,6 @@ val appModule = module {
         )
     }
 
-<<<<<<< HEAD
     // ── UI ────────────────────────────────────────────────────────────
     viewModel { VoxynViewModel(engine = get()) }
-=======
-    viewModel { VoxynViewModel(engine = get(), modelManager = get()) }
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 }

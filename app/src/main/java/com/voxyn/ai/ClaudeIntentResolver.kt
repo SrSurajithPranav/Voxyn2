@@ -56,32 +56,16 @@ REMEMBER_THIS
 CHAIN — params: {"steps": "[\"OPEN_APP:spotify\", \"PLAY_MUSIC\", \"VOLUME_UP\"]"}
 UNKNOWN — if nothing matches
 
-CONTEXT RESOLUTION:
-- Use the provided conversation history to resolve pronouns and follow-up commands.
-- Example: history contains "turn on flashlight" and user says "turn it off" -> FLASHLIGHT_OFF.
-- For multi-stop navigation, return params: {"destinations": "StopA|StopB|StopC"}.
-- For messaging platform routing, return params: {"message": "...", "contact": "...", "platform": "whatsapp|sms|instagram"}.
-
 EXAMPLES:
 "Call my wife" → {"action":"CALL_CONTACT","confidence":0.95,"params":{"contact":"wife"},"speak":"Calling your wife."}
 "Set a timer for pasta" → {"action":"SET_TIMER","confidence":0.97,"params":{"duration":"10 minutes","label":"pasta"},"speak":"Timer started."}
-<<<<<<< HEAD
 "Open spotify and play music" → {"action":"CHAIN","confidence":0.95,"params":{"steps":"[\"OPEN_APP:spotify\", \"PLAY_MUSIC\"]"},"speak":"Opening Spotify and playing music."}
 "Scroll down" → {"action":"SCROLL_DOWN","confidence":0.96,"params":{},"speak":"Scrolling down."}
 "Send this message" → {"action":"SEND_CURRENT_MESSAGE","confidence":0.97,"params":{},"speak":"Sending message."}
-=======
-"Navigate home" → {"action":"NAVIGATE","confidence":0.95,"params":{"destination":"home","mode":"driving"},"speak":"Opening navigation."}
-"visit Central Park and then Times Square" → {"action":"NAVIGATE","confidence":0.95,"params":{"destinations":"Central Park|Times Square"},"speak":"Opening multi-stop navigation."}
-"send text I am on my way to John on WhatsApp" → {"action":"SEND_MESSAGE","confidence":0.95,"params":{"message":"I am on my way","contact":"John","platform":"whatsapp"},"speak":"Sending your message."}
-"Driving mode" → {"action":"MODE_ACTIVATE","confidence":0.98,"params":{"mode_name":"driving"},"speak":"Driving mode activated."}
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         """.trimIndent()
     }
 
-    suspend fun resolve(
-        userInput: String,
-        conversationHistory: List<String> = emptyList()
-    ): ClaudeResult = withContext(Dispatchers.IO) {
+    suspend fun resolve(userInput: String): ClaudeResult = withContext(Dispatchers.IO) {
         VoxynLogger.i("Claude resolving: \"$userInput\"", "CLAUDE")
         try {
             val body = JSONObject().apply {
@@ -89,12 +73,6 @@ EXAMPLES:
                 put("max_tokens", 300)
                 put("system", SYSTEM_PROMPT)
                 put("messages", JSONArray().apply {
-                    conversationHistory.takeLast(8).forEach { utterance ->
-                        put(JSONObject().apply {
-                            put("role", "user")
-                            put("content", "History: $utterance")
-                        })
-                    }
                     put(JSONObject().apply { put("role", "user"); put("content", userInput) })
                 })
             }.toString()
