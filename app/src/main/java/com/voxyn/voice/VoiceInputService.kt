@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
@@ -18,9 +19,9 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.voxyn.MainActivity
-import com.voxyn.wake.WakeWordService
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.wake.WakeWordService
 import org.koin.android.ext.android.inject
 
 class VoiceInputService : Service() {
@@ -35,7 +36,7 @@ class VoiceInputService : Service() {
     private val engine: VoxynEngine by inject()
     private var recognizer: SpeechRecognizer? = null
     private var isActive = false
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler  = Handler(Looper.getMainLooper())
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
 
@@ -50,8 +51,7 @@ class VoiceInputService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_LISTENING -> handler.postDelayed({ startListening() }, 200L)
-            ACTION_STOP_LISTENING  -> finishAndHandoff(null)
-            else                   -> handler.postDelayed({ startListening() }, 200L)
+            ACTION_STOP_LISTENING  -> finishAndResume(null)
         }
         return START_NOT_STICKY
     }
@@ -69,24 +69,34 @@ class VoiceInputService : Service() {
 
     private fun startListening() {
         if (isActive) return
-
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             VoxynLogger.e("SpeechRecognizer unavailable", tag = "VOICE")
-            finishAndHandoff(null)
+            finishAndResume(null)
             return
         }
 
         requestAudioFocus()
         destroyRecognizer()
 
-        // Use the device-configured recognizer. Hard-coding Google's private
-        // component makes voice input fail on non-Google Android distributions.
+        // Try Google STT first (best accuracy on OxygenOS/MIUI)
+        // Falls back to default if Google not available
         recognizer = try {
-            SpeechRecognizer.createSpeechRecognizer(this)
+            SpeechRecognizer.createSpeechRecognizer(
+                this,
+                ComponentName(
+                    "com.google.android.googlequicksearchbox",
+                    "com.google.android.voicesearch.serviceapi.GoogleRecognitionService"
+                )
+            )
         } catch (e: Exception) {
-            VoxynLogger.e("Unable to create speech recognizer: ${e.message}", tag = "VOICE")
-            finishAndHandoff(null)
-            return
+            VoxynLogger.w("Google STT unavailable, using default: ${e.message}", "VOICE")
+            try {
+                SpeechRecognizer.createSpeechRecognizer(this)
+            } catch (e2: Exception) {
+                VoxynLogger.e("No STT available: ${e2.message}", tag = "VOICE")
+                finishAndResume(null)
+                return
+            }
         }
 
         recognizer?.setRecognitionListener(listener)
@@ -97,7 +107,7 @@ class VoiceInputService : Service() {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
         }
@@ -109,7 +119,7 @@ class VoiceInputService : Service() {
             VoxynLogger.i("Recognition started", "VOICE")
         } catch (e: Exception) {
             VoxynLogger.e("startListening failed: ${e.message}", tag = "VOICE")
-            finishAndHandoff(null)
+            finishAndResume(null)
         }
     }
 
@@ -120,7 +130,9 @@ class VoiceInputService : Service() {
             audioManager?.requestAudioFocus(audioFocusRequest!!)
         } else {
             @Suppress("DEPRECATION")
-            audioManager?.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            audioManager?.requestAudioFocus(
+                null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            )
         }
     }
 
@@ -137,18 +149,41 @@ class VoiceInputService : Service() {
         isActive   = false
     }
 
-    private fun finishAndHandoff(result: String?) {
-        // The recognizer owns transient audio focus. Release it before the
-        // pipeline can produce its spoken response, and do not restart it.
+    /**
+     * Always called when done — sends result to engine then resumes WakeWordService.
+     * This is what creates the infinite loop: Wake → Voice → Wake → Voice → ...
+     */
+    private fun finishAndResume(result: String?) {
         releaseAudioFocus()
         destroyRecognizer()
+
         if (result != null) {
             VoxynLogger.i("Voice → Engine: \"$result\"", "VOICE")
             engine.process(result)
         }
-        startForegroundService(Intent(this, WakeWordService::class.java).apply {
-            action = WakeWordService.ACTION_START
-        })
+
+        // Tell WakeWordService to resume detection
+        // This is the key line that makes VOXYN continuous
+        try {
+            startService(
+                Intent(this, WakeWordService::class.java).apply {
+                    action = WakeWordService.ACTION_RESUME
+                }
+            )
+        } catch (e: Exception) {
+            VoxynLogger.e("Failed to resume WakeWordService: ${e.message}", tag = "VOICE")
+            // Fallback: restart WakeWordService completely
+            try {
+                startForegroundService(
+                    Intent(this, WakeWordService::class.java).apply {
+                        action = WakeWordService.ACTION_START
+                    }
+                )
+            } catch (e2: Exception) {
+                VoxynLogger.e("Full WakeWordService restart failed: ${e2.message}", tag = "VOICE")
+            }
+        }
+
         stopSelf()
     }
 
@@ -158,22 +193,27 @@ class VoiceInputService : Service() {
         override fun onReadyForSpeech(params: Bundle?) {
             VoxynLogger.d("Ready for speech", "VOICE")
         }
-        override fun onBeginningOfSpeech() { updateNotification("Hearing you...") }
+        override fun onBeginningOfSpeech() {
+            updateNotification("Hearing you...")
+        }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() { updateNotification("Processing..."); isActive = false }
+        override fun onEndOfSpeech() {
+            updateNotification("Processing...")
+            isActive = false
+        }
         override fun onError(error: Int) {
             val msg = when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH           -> "No speech detected"
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT     -> "Timed out"
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY    -> "Recognizer busy"
+                SpeechRecognizer.ERROR_NO_MATCH                  -> "No speech — resuming"
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT            -> "Timeout — resuming"
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY           -> "Recognizer busy"
                 SpeechRecognizer.ERROR_NETWORK,
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT    -> "Network error"
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Need mic permission"
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT           -> "Network error"
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS  -> "Microphone permission needed"
                 else -> "Error $error"
             }
-            VoxynLogger.w("Voice error: $msg", "VOICE")
-            finishAndHandoff(null)
+            VoxynLogger.w("Voice: $msg", "VOICE")
+            finishAndResume(null)
         }
         override fun onResults(results: Bundle?) {
             isActive = false
@@ -181,7 +221,7 @@ class VoiceInputService : Service() {
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
             VoxynLogger.i("Result: \"$text\"", "VOICE")
-            finishAndHandoff(text)
+            finishAndResume(text)
         }
         override fun onPartialResults(partial: Bundle?) {
             val text = partial
@@ -197,13 +237,19 @@ class VoiceInputService : Service() {
     private fun buildNotification(status: String): Notification {
         val pi = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("VOXYN Voice").setContentText(status)
+            .setContentTitle("VOXYN Voice")
+            .setContentText(status)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentIntent(pi).setOngoing(true).setShowWhen(false).build()
+            .setContentIntent(pi)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .build()
     }
 
     private fun updateNotification(status: String) {
@@ -215,8 +261,15 @@ class VoiceInputService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(
-                    NotificationChannel(CHANNEL_ID, "VOXYN Voice Input", NotificationManager.IMPORTANCE_LOW)
-                        .apply { setShowBadge(false); setSound(null, null) }
+                    NotificationChannel(
+                        CHANNEL_ID,
+                        "VOXYN Voice Input",
+                        NotificationManager.IMPORTANCE_LOW
+                    ).apply {
+                        setShowBadge(false)
+                        setSound(null, null)
+                        enableVibration(false)
+                    }
                 )
         }
     }
