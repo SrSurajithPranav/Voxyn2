@@ -28,6 +28,7 @@ class WakeWordService : Service(), RecognitionListener {
 
     private var speechService: SpeechService? = null
     private var model: Model? = null
+    private var serviceDestroyed = false
     private var triggered = false
 
     override fun onCreate() {
@@ -50,7 +51,7 @@ class WakeWordService : Service(), RecognitionListener {
             "model-en-us",
             "voxyn-wake-model",
             { loaded ->
-                if (isDestroyed) return@unpack
+                if (serviceDestroyed) return@unpack
                 model = loaded
                 val recognizer = Recognizer(loaded, 16_000f, "[\"$WAKE_PHRASE\", \"[unk]\"]")
                 speechService = SpeechService(recognizer, 16_000f).also { it.startListening(this) }
@@ -87,6 +88,7 @@ class WakeWordService : Service(), RecognitionListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        serviceDestroyed = true
         speechService?.shutdown()
         speechService = null
         model?.close()
