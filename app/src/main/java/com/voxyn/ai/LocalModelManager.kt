@@ -1,6 +1,11 @@
 package com.voxyn.ai
 
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,12 +22,12 @@ data class DownloadOutcome(val ok: Boolean, val message: String)
 
 /**
  * LocalModelManager — downloads and exposes the on-device LLM model file
- * (MediaPipe .task / flatbuffer model) inside the app's private storage.
- * No storage permissions needed because the file lives in filesDir.
+ * (MediaPipe .task / flatbuffer model).
  *
- * The original Google-hosted model URL now returns 403, so the downloader
- * tries working HuggingFace mirrors in order and falls back to a CPU build
- * of the same Gemma 2B int4 model for devices without a supported GPU.
+ * The model is stored in the app's private filesDir, but a copy is ALSO backed
+ * up to the public Downloads folder (MediaStore, no permission needed). That way
+ * uninstalling/reinstalling the app does NOT lose the ~1.4 GB model — after a
+ * reinstall VOXYN restores it from Downloads instead of re-downloading.
  */
 class LocalModelManager(private val context: Context) {
 
@@ -33,7 +38,9 @@ class LocalModelManager(private val context: Context) {
             "https://huggingface.co/autoocrat0413/gemma-2b-it-gpu-int4-mediapipe/resolve/main/gemma-2b-it-gpu-int4.bin",
             "https://huggingface.co/autoocrat0413/gemma-2b-it-gpu-int4-mediapipe/resolve/main/gemma-2b-it-cpu-int4.bin"
         )
-        const val MODEL_FILE_NAME = "llm.task"
+        const val MODEL_FILE_NAME   = "llm.task"
+        const val DOWNLOAD_FILE_NAME = "voxyn-llm.task"
+        const val DOWNLOAD_DIR       = "Download/VoxynAI"
         private const val MIN_VALID_SIZE = 1_000_000L
     }
 
@@ -42,6 +49,19 @@ class LocalModelManager(private val context: Context) {
 
     fun isModelPresent(): Boolean =
         modelFile.exists() && isValidModel(modelFile)
+
+    /** Private copy missing but a backup exists in Downloads → copy it back. */
+    suspend fun ensureModelAvailable(): Boolean {
+        if (isModelPresent()) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return withContext(Dispatchers.IO) {
+            val restored = restoreFromDownloadsBlocking()
+            if (restored) {
+                VoxynLogger.i("Local LLM model restored from Downloads (no re-download)", "AI")
+            }
+            restored
+        }
+    }
 
     /** Streams the model to filesDir; reports 0..1 progress for the active mirror. */
     suspend fun downloadModel(onProgress: (Float) -> Unit): DownloadOutcome = withContext(Dispatchers.IO) {
@@ -83,6 +103,7 @@ class LocalModelManager(private val context: Context) {
 
                 if (downloadedTotal > MIN_VALID_SIZE && isValidModel(tmp) && tmp.renameTo(modelFile)) {
                     VoxynLogger.i("Local LLM model ready: ${modelFile.length() / 1_000_000} MB from $url", "AI")
+                    backupToDownloadsBlocking()
                     return@withContext DownloadOutcome(true, "Local AI model ready. VOXYN now works offline.")
                 }
                 tmp.delete()
@@ -98,6 +119,69 @@ class LocalModelManager(private val context: Context) {
             "Download failed. All mirrors unreachable — check your connection and try again."
         )
     }
+
+    suspend fun backupToDownloads() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        withContext(Dispatchers.IO) { backupToDownloadsBlocking() }
+    }
+
+    // ─── Downloads (MediaStore) backup/restore ─────────────────────────
+
+    private fun backupToDownloadsBlocking() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        if (!isModelPresent()) return
+        runCatching {
+            val resolver = context.contentResolver
+            var uri = queryDownloadsUri() ?: resolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, DOWNLOAD_FILE_NAME)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Downloads.RELATIVE_PATH, DOWNLOAD_DIR)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+            )
+            if (uri == null) return@runCatching
+            resolver.openOutputStream(uri)?.use { out ->
+                modelFile.inputStream().use { input -> input.copyTo(out, 128 * 1024) }
+            }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+            VoxynLogger.i("Local LLM model backed up to Downloads/VoxynAI", "AI")
+        }.onFailure {
+            VoxynLogger.e("Model backup to Downloads failed: ${it.message}", tag = "AI")
+        }
+    }
+
+    private fun restoreFromDownloadsBlocking(): Boolean = runCatching {
+        val resolver = context.contentResolver
+        val uri = queryDownloadsUri() ?: return false
+        modelFile.parentFile?.mkdirs()
+        val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.restore")
+        tmp.delete()
+        val copied = resolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(tmp).use { out -> input.copyTo(out, 128 * 1024) }
+            tmp.length() > MIN_VALID_SIZE
+        } ?: false
+        if (copied && isValidModel(tmp) && tmp.renameTo(modelFile)) {
+            true
+        } else {
+            tmp.delete()
+            false
+        }
+    }.getOrDefault(false)
+
+    private fun queryDownloadsUri(): Uri? =
+        context.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Downloads._ID),
+            "${MediaStore.Downloads.DISPLAY_NAME}=?",
+            arrayOf(DOWNLOAD_FILE_NAME),
+            null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0))
+            } else null
+        }
 
     /** Loose validation: MediaPipe flatbuffer (TFL3), task zip (PK) or GGUF. */
     private fun isValidModel(file: File): Boolean {

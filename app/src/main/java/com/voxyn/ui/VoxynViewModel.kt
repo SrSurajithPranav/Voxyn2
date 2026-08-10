@@ -58,6 +58,16 @@ class VoxynViewModel(
     fun refreshLocalAi() {
         viewModelScope.launch {
             _localAi.update { it.copy(modelPresent = localModelManager.isModelPresent(), message = "") }
+            if (!_localAi.value.modelPresent) {
+                _localAi.update { it.copy(message = "Checking Downloads for a saved AI model...") }
+                val restored = localModelManager.ensureModelAvailable()
+                _localAi.update {
+                    it.copy(
+                        modelPresent = restored,
+                        message = if (restored) "Model restored from Downloads — ready offline." else ""
+                    )
+                }
+            }
         }
     }
 

@@ -188,7 +188,7 @@ fun LocalAiPanel(state: LocalAiUiState, onDownload: () -> Unit, onRefresh: () ->
                     state.downloading -> "downloading ${(state.progress * 100).toInt()}%"
                     state.modelPresent -> "model ready — works offline"
                     state.message.isNotBlank() -> state.message
-                    else -> "not installed — download once for offline AI"
+                    else -> "not installed — download once, saved in Downloads"
                 },
                 color = if (state.modelPresent) SUCCESS_COLOR else DIM_COLOR,
                 fontSize = 11.sp,
