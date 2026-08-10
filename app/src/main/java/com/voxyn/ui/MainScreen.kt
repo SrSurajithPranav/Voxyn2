@@ -35,6 +35,7 @@ fun MainScreen(
     viewModel: VoxynViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val localAi by viewModel.localAi.collectAsState()
     var input by remember { mutableStateOf("") }
 
     Box(
@@ -51,6 +52,11 @@ fun MainScreen(
             Header(isRunning = state.isRunning, phase = state.currentPhase?.name)
             PhaseBar(currentPhase = state.currentPhase?.ordinal ?: -1, isRunning = state.isRunning)
             LogPanel(logs = state.logs, modifier = Modifier.weight(1f))
+            LocalAiPanel(
+                state = localAi,
+                onDownload = { viewModel.downloadLocalModel() },
+                onRefresh = { viewModel.refreshLocalAi() }
+            )
             CommandInput(
                 value = input,
                 isRunning = state.isRunning,
@@ -152,6 +158,55 @@ fun LogPanel(logs: List<String>, modifier: Modifier = Modifier) {
                         Text(log, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun LocalAiPanel(state: LocalAiUiState, onDownload: () -> Unit, onRefresh: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = VoxynSurface,
+        border = BorderStroke(1.dp, DIM_COLOR.copy(alpha = 0.3f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                "LOCAL AI",
+                color = VoxynCyan,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                when {
+                    state.downloading -> "downloading ${(state.progress * 100).toInt()}%"
+                    state.modelPresent -> "model ready — works offline"
+                    state.message.isNotBlank() -> state.message
+                    else -> "not installed — download once for offline AI"
+                },
+                color = if (state.modelPresent) SUCCESS_COLOR else DIM_COLOR,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f)
+            )
+            if (!state.modelPresent && !state.downloading) {
+                OutlinedButton(
+                    onClick = onDownload,
+                    border = BorderStroke(1.dp, VoxynCyan),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("DOWNLOAD", color = VoxynCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+            if (state.downloading) {
+                Text("${(state.progress * 100).toInt()}%", color = VoxynCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             }
         }
     }

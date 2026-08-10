@@ -6,6 +6,7 @@ import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.ai.ClaudeResult
 import com.voxyn.ai.KnowledgeProvider
 import com.voxyn.ai.LocalKnowledgeProvider
+import com.voxyn.ai.LocalLlmProvider
 import com.voxyn.ai.WorldTimeProvider
 import com.voxyn.core.*
 import com.voxyn.execution.ExecutionController
@@ -41,6 +42,7 @@ class VoxynEngine(
     private val worldTimeProvider: WorldTimeProvider,
     private val knowledgeProvider: KnowledgeProvider,
     private val localKnowledge   : LocalKnowledgeProvider,
+    private val localLlm         : LocalLlmProvider? = null,
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
     private val phaseTimeoutMs : Long = 10_000L
@@ -405,7 +407,18 @@ class VoxynEngine(
             return
         }
         VoxynLogger.i("[AI] Knowledge query: \"$question\"", "AI")
-        val result = knowledgeProvider.knowledge(question)
+
+        // Local LLM first (offline, private), then keyless web knowledge,
+        // then a graceful fallback. Never fabricate.
+        val localAnswer = localLlm?.let {
+            try {
+                withTimeout(45_000L) { it.answer(question, conversationSession.getContext()) }
+            } catch (e: Exception) {
+                VoxynLogger.e("Local LLM timeout/failure: ${e.message}", tag = "AI")
+                null
+            }
+        }
+        val result = localAnswer ?: knowledgeProvider.knowledge(question)
         if (result != null) {
             completeConversational("KNOWLEDGE", result.text)
         } else {

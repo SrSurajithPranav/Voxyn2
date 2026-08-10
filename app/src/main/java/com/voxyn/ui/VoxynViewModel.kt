@@ -2,6 +2,7 @@ package com.voxyn.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.voxyn.ai.LocalModelManager
 import com.voxyn.core.PipelineEvent
 import com.voxyn.core.PipelinePhase
 import com.voxyn.engine.VoxynEngine
@@ -18,15 +19,29 @@ data class VoxynUiState(
     val partialText: String = ""
 )
 
-class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
+data class LocalAiUiState(
+    val modelPresent: Boolean = false,
+    val downloading: Boolean = false,
+    val progress: Float = 0f,
+    val message: String = ""
+)
+
+class VoxynViewModel(
+    private val engine: VoxynEngine,
+    private val localModelManager: LocalModelManager
+) : ViewModel() {
 
     private val _state = MutableStateFlow(VoxynUiState())
     val state: StateFlow<VoxynUiState> = _state.asStateFlow()
+
+    private val _localAi = MutableStateFlow(LocalAiUiState())
+    val localAi: StateFlow<LocalAiUiState> = _localAi.asStateFlow()
 
     init {
         viewModelScope.launch {
             engine.events.collect { event -> handleEvent(event) }
         }
+        refreshLocalAi()
     }
 
     fun submit(input: String) {
@@ -38,6 +53,33 @@ class VoxynViewModel(private val engine: VoxynEngine) : ViewModel() {
     fun interrupt() {
         engine.interrupt("User cancelled")
         _state.update { it.copy(isRunning = false) }
+    }
+
+    fun refreshLocalAi() {
+        viewModelScope.launch {
+            _localAi.update { it.copy(modelPresent = localModelManager.isModelPresent(), message = "") }
+        }
+    }
+
+    fun downloadLocalModel() {
+        if (_localAi.value.downloading) return
+        viewModelScope.launch {
+            _localAi.update { it.copy(downloading = true, progress = 0f, message = "Downloading AI model (~1.4 GB)...") }
+            val ok = localModelManager.downloadModel { progress ->
+                _localAi.update { it.copy(progress = progress) }
+            }
+            _localAi.update {
+                it.copy(
+                    downloading = false,
+                    modelPresent = ok,
+                    message = if (ok) {
+                        "Local AI model ready. VOXYN now works offline."
+                    } else {
+                        "Download failed. Check your connection and try again."
+                    }
+                )
+            }
+        }
     }
 
     private fun handleEvent(event: PipelineEvent) {

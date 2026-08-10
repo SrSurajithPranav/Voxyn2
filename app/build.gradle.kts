@@ -11,8 +11,8 @@ android {
         applicationId = "com.voxyn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.0.9"
+        versionCode = 11
+        versionName = "1.0.10"
         buildConfigField("String", "CLAUDE_API_KEY", "\"\"")
     }
 
@@ -70,6 +70,9 @@ dependencies {
 
     // Offline wake-word (Vosk)
     implementation("com.alphacephei:vosk-android:0.3.75")
+
+    // On-device LLM (MediaPipe GenAI) — local conversational AI
+    implementation(libs.mediapipe.genai)
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)

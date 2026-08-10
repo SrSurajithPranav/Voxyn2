@@ -3,6 +3,8 @@ package com.voxyn.di
 import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.ai.KnowledgeProvider
 import com.voxyn.ai.LocalKnowledgeProvider
+import com.voxyn.ai.LocalLlmProvider
+import com.voxyn.ai.LocalModelManager
 import com.voxyn.ai.WorldTimeProvider
 import com.voxyn.apps.AppCatalog
 import com.voxyn.BuildConfig
@@ -48,6 +50,8 @@ val appModule = module {
     single { WorldTimeProvider() }
     single { KnowledgeProvider() }
     single { LocalKnowledgeProvider() }
+    single { LocalModelManager(androidContext()) }
+    single { LocalLlmProvider(androidContext(), get()) }
 
     // ── Intent ────────────────────────────────────────────────────────
     single { IntentRouter() }
@@ -80,11 +84,12 @@ val appModule = module {
             worldTimeProvider = get(),
             knowledgeProvider = get(),
             localKnowledge   = get(),
+            localLlm         = get(),
             claudeResolver = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeIntentResolver(it) },
             modeEngine     = get()
         )
     }
 
     // ── UI ────────────────────────────────────────────────────────────
-    viewModel { VoxynViewModel(engine = get()) }
+    viewModel { VoxynViewModel(engine = get(), localModelManager = get()) }
 }
