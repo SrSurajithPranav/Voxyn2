@@ -48,77 +48,92 @@ class LocalModelManager(private val context: Context) {
     val modelFile: File
         get() = File(File(context.filesDir, "models"), MODEL_FILE_NAME)
 
+    @Volatile private var downloadInProgress = false
+
     fun isModelPresent(): Boolean =
         modelFile.exists() && isValidModel(modelFile)
 
-    /** Private copy missing but a backup exists in Downloads → copy it back. */
+    /**
+     * Makes the LLM available without user interaction: verifies the private
+     * copy, restores it from Downloads after a reinstall, and as a last resort
+     * downloads it in the background so the app is never left without AI.
+     */
     suspend fun ensureModelAvailable(): Boolean {
         if (isModelPresent()) return true
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        return withContext(Dispatchers.IO) {
-            val restored = restoreFromDownloadsBlocking()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val restored = withContext(Dispatchers.IO) { restoreFromDownloadsBlocking() }
             if (restored) {
                 VoxynLogger.i("Local LLM model restored from Downloads (no re-download)", "AI")
+                return true
             }
-            restored
         }
+        VoxynLogger.i("Local LLM model not on device — downloading in background", "AI")
+        return downloadModel {}.ok
     }
 
     /** Streams the model to filesDir; reports 0..1 progress for the active mirror. */
     suspend fun downloadModel(onProgress: (Float) -> Unit): DownloadOutcome = withContext(Dispatchers.IO) {
-        modelFile.parentFile?.mkdirs()
+        if (downloadInProgress) {
+            return@withContext DownloadOutcome(false, "Download already in progress")
+        }
+        downloadInProgress = true
+        try {
+            modelFile.parentFile?.mkdirs()
 
-        for (url in MODEL_URLS) {
-            val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.part")
-            tmp.delete()
-            var downloadedTotal = 0L
-            try {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant)")
-                }
-                val code = conn.responseCode
-                if (code != 200) {
-                    VoxynLogger.e("Model download HTTP $code from $url", tag = "AI")
-                    continue
-                }
+            for (url in MODEL_URLS) {
+                val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.part")
+                tmp.delete()
+                var downloadedTotal = 0L
+                try {
+                    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 15_000
+                        readTimeout = 30_000
+                        instanceFollowRedirects = true
+                        setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant)")
+                    }
+                    val code = conn.responseCode
+                    if (code != 200) {
+                        VoxynLogger.e("Model download HTTP $code from $url", tag = "AI")
+                        continue
+                    }
 
-                val total = conn.contentLengthLong
-                conn.inputStream.use { input ->
-                    FileOutputStream(tmp).use { out ->
-                        val buf = ByteArray(128 * 1024)
-                        while (true) {
-                            val read = input.read(buf)
-                            if (read == -1) break
-                            out.write(buf, 0, read)
-                            downloadedTotal += read
-                            if (total > 0) {
-                                onProgress((downloadedTotal.toFloat() / total).coerceIn(0f, 1f))
+                    val total = conn.contentLengthLong
+                    conn.inputStream.use { input ->
+                        FileOutputStream(tmp).use { out ->
+                            val buf = ByteArray(128 * 1024)
+                            while (true) {
+                                val read = input.read(buf)
+                                if (read == -1) break
+                                out.write(buf, 0, read)
+                                downloadedTotal += read
+                                if (total > 0) {
+                                    onProgress((downloadedTotal.toFloat() / total).coerceIn(0f, 1f))
+                                }
                             }
                         }
                     }
-                }
 
-                if (downloadedTotal > MIN_VALID_SIZE && isValidModel(tmp) && tmp.renameTo(modelFile)) {
-                    VoxynLogger.i("Local LLM model ready: ${modelFile.length() / 1_000_000} MB from $url", "AI")
-                    backupToDownloadsBlocking()
-                    return@withContext DownloadOutcome(true, "Local AI model ready. VOXYN now works offline.")
+                    if (downloadedTotal > MIN_VALID_SIZE && isValidModel(tmp) && tmp.renameTo(modelFile)) {
+                        VoxynLogger.i("Local LLM model ready: ${modelFile.length() / 1_000_000} MB from $url", "AI")
+                        backupToDownloadsBlocking()
+                        return@withContext DownloadOutcome(true, "Local AI model ready. VOXYN now works offline.")
+                    }
+                    tmp.delete()
+                    VoxynLogger.e("Model file invalid (${downloadedTotal} bytes) from $url", tag = "AI")
+                } catch (e: Exception) {
+                    tmp.delete()
+                    VoxynLogger.e("Model download failed from $url: ${e.message}", tag = "AI")
                 }
-                tmp.delete()
-                VoxynLogger.e("Model file invalid (${downloadedTotal} bytes) from $url", tag = "AI")
-            } catch (e: Exception) {
-                tmp.delete()
-                VoxynLogger.e("Model download failed from $url: ${e.message}", tag = "AI")
             }
-        }
 
-        DownloadOutcome(
-            false,
-            "Download failed. All mirrors unreachable — check your connection and try again."
-        )
+            DownloadOutcome(
+                false,
+                "Download failed. All mirrors unreachable — check your connection and try again."
+            )
+        } finally {
+            downloadInProgress = false
+        }
     }
 
     suspend fun backupToDownloads() {

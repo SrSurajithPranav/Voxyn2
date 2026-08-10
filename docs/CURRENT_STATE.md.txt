@@ -454,6 +454,11 @@ WhatsApp group messaging — routed and parsed but returns "not supported yet" (
 
 Custom contact aliases beyond the built-in mom/dad family map
 
+On a brand-new install with no Downloads backup, VOXYN must download ~1.2 GB of
+models (Parakeet ASR 670 MB + Gemma LLM 529 MB) before full offline capability;
+after that the files are backed up to Download/VoxynAI/ and every reinstall
+restores them automatically at launch without re-downloading
+
 Continuous learning
 
 Plugin loading

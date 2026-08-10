@@ -639,3 +639,52 @@ fallback) and the TTS is honest: "Opened WhatsApp to Rahul."
 ## Review Date
 
 2026-08-10
+
+---
+
+# ADR-013
+
+## Title
+
+Auto-restore on-device models (ASR + LLM) at launch; reject corrupt downloads
+
+## Status
+
+Accepted (extends ADR-004/ADR-008 model management)
+
+## Context
+
+After a reinstall the app fell back to the weak Vosk command STT and the local
+LLM failed with "Unable to open zip archive" because the Downloads backup held a
+raw TFLite flatbuffer (1.35 GB) instead of a valid MediaPipe `.task` zip. The
+user should never need the settings screen to make VOXYN offline-capable again.
+
+## Decision
+
+`VoxynApplication` restores both models on a background IO coroutine at every
+launch:
+
+- `ParakeetModelManager.ensureAvailable()` copies the Parakeet ASR files back
+  from `Download/VoxynAI/asr` (or verifies the private copy) so the command STT
+  uses Parakeet instead of the Vosk fallback.
+- `LocalModelManager.ensureModelAvailable()` restores `llm.task` from
+  `Download/VoxynAI/voxyn-llm.task`; when no valid backup exists it downloads
+  in the background so the app heals itself without UI interaction.
+
+Both managers already validate `.task` files by requiring a `PK` local-file
+header and `PK\x05\x06` end-of-central-directory marker, which rejects raw
+TFLite flatbuffers and truncated downloads. A `downloadInProgress` guard in
+`LocalModelManager` prevents concurrent downloads (app-launch restore racing
+the settings button).
+
+## Consequences
+
+- Fresh installs with model files in `Download/VoxynAI` become fully offline in
+  seconds without opening the app.
+- Corrupt backups are detected, never copied, and trigger a fresh download.
+- The correct model is `gemma3-1B-it-int4.task` (554,661,243 bytes,
+  `JafarKhan1989/gemma-3-1b-mediapipe`), verified by header/tail magic.
+
+## Review Date
+
+2026-08-10

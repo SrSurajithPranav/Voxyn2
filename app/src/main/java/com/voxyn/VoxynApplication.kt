@@ -7,9 +7,16 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import com.voxyn.ai.LocalModelManager
 import com.voxyn.di.appModule
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.wake.WakeWordService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
@@ -30,6 +37,42 @@ class VoxynApplication : Application() {
         logDiagnostics()
         VoxynLogger.i("VOXYN starting — launching background services", "APP")
         startWakeService()
+        restoreModelsInBackground()
+    }
+
+    /**
+     * Restores the on-device models (Parakeet ASR + local LLM) from the public
+     * Downloads backup so a reinstall never requires re-downloading ~1.2 GB.
+     * The LLM manager falls back to a background download when no valid backup
+     * exists, so VOXYN becomes fully offline-capable without touching the UI.
+     */
+    private fun restoreModelsInBackground() {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val asrOk = runCatching {
+                get<ParakeetModelManager>().ensureAvailable()
+            }.getOrElse {
+                VoxynLogger.e("ASR model restore failed: ${it.message}", tag = "APP")
+                false
+            }
+            VoxynLogger.i(
+                if (asrOk) "ASR Parakeet model ready — offline STT active"
+                else "ASR model not available — Vosk fallback until download completes",
+                "APP"
+            )
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val llmOk = runCatching {
+                get<LocalModelManager>().ensureModelAvailable()
+            }.getOrElse {
+                VoxynLogger.e("Local LLM model restore failed: ${it.message}", tag = "APP")
+                false
+            }
+            VoxynLogger.i(
+                if (llmOk) "Local LLM model ready — offline AI active"
+                else "Local LLM model not available yet",
+                "APP"
+            )
+        }
     }
 
     private fun logDiagnostics() {

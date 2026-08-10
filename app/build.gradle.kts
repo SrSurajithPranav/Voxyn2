@@ -11,8 +11,8 @@ android {
         applicationId = "com.voxyn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.0.16"
+        versionCode = 18
+        versionName = "1.0.17"
         buildConfigField("String", "CLAUDE_API_KEY", "\"\"")
         ndk {
             // The user's device is ARM64; shipping only arm64 keeps the APK small

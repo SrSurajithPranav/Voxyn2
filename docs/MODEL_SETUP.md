@@ -51,3 +51,49 @@ VadModelConfig
     minSpeechDuration   : 0.25 s
     maxSpeechDuration   : 10 s
 ```
+
+---
+
+# Model setup — on-device LLM (MediaPipe GenAI, Gemma 3 1B)
+
+## Exact model
+
+- MediaPipe `.task` bundle: `gemma3-1B-it-int4.task` — Gemma 3 1B, INT4, instruction-tuned
+- Primary URL: `https://huggingface.co/JafarKhan1989/gemma-3-1b-mediapipe/resolve/main/gemma3-1B-it-int4.task`
+- Mirror: `https://huggingface.co/gummybear2555/Gemma-3n-E2B-it-int4/resolve/main/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task`
+- Expected size: **554,661,243 bytes** (≈ 529 MB)
+
+## Why the old download failed
+
+MediaPipe GenAI `.task` files are ZIP archives. A raw TFLite flatbuffer
+(1.35 GB, starts `54 46 6c 33`) is NOT a valid task bundle — the engine rejects
+it with `Unable to open zip archive`. Any mirror that serves a raw `.bin`/flatbuffer
+must not be used.
+
+## Validate a downloaded file (Termux)
+
+```sh
+# Head must contain "PK" at offset 4 (00 00 00 00 50 4b 03 04)
+head -c 16 voxyn-llm.task | od -A x -t x1z
+# Tail must end with the zip end-of-central-directory marker (50 4b 05 06)
+tail -c 24 voxyn-llm.task | od -A x -t x1z
+```
+
+## Where the files live
+
+| Location | File | Purpose |
+|----------|------|---------|
+| App-private | `filesDir/models/llm.task` | Loaded by `LocalLlmProvider` at runtime |
+| Downloads backup | `Download/VoxynAI/voxyn-llm.task` | Survives uninstall/reinstall |
+
+The app restores the private copy from Downloads at every launch
+(`LocalModelManager.ensureModelAvailable()`), so after copying the file to
+`Download/VoxynAI/` once, a reinstall needs **no** re-download. If no valid
+backup exists, VOXYN downloads the model in the background by itself.
+
+## Manual install (fastest path)
+
+1. Download `gemma3-1B-it-int4.task` from the primary URL above.
+2. Copy it to `Download/VoxynAI/voxyn-llm.task` on the phone (replace any old file).
+3. Verify the header/tail magic as shown above.
+4. Launch VOXYN — the log will show `Local LLM model ready — offline AI active`.
