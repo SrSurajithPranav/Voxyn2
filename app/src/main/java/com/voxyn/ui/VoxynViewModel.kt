@@ -65,19 +65,11 @@ class VoxynViewModel(
         if (_localAi.value.downloading) return
         viewModelScope.launch {
             _localAi.update { it.copy(downloading = true, progress = 0f, message = "Downloading AI model (~1.4 GB)...") }
-            val ok = localModelManager.downloadModel { progress ->
+            val outcome = localModelManager.downloadModel { progress ->
                 _localAi.update { it.copy(progress = progress) }
             }
             _localAi.update {
-                it.copy(
-                    downloading = false,
-                    modelPresent = ok,
-                    message = if (ok) {
-                        "Local AI model ready. VOXYN now works offline."
-                    } else {
-                        "Download failed. Check your connection and try again."
-                    }
-                )
+                it.copy(downloading = false, modelPresent = outcome.ok, message = outcome.message)
             }
         }
     }
