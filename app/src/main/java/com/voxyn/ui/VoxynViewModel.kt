@@ -67,6 +67,10 @@ class VoxynViewModel(
                         message = if (restored) "Model restored from Downloads — ready offline." else ""
                     )
                 }
+            } else {
+                // Model already on device (e.g. upgraded from an older build):
+                // make sure a copy exists in Downloads so it survives uninstall/reinstall.
+                localModelManager.backupIfMissing()
             }
         }
     }

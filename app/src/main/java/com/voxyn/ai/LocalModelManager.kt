@@ -125,6 +125,19 @@ class LocalModelManager(private val context: Context) {
         withContext(Dispatchers.IO) { backupToDownloadsBlocking() }
     }
 
+    /**
+     * Backs the model up to Downloads only when no valid copy exists there yet.
+     * Used on app start when the model is already on device (e.g. after upgrading
+     * from a build that didn't create the backup) — avoids copying ~1.4 GB every launch.
+     */
+    suspend fun backupIfMissing() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        withContext(Dispatchers.IO) {
+            if (hasValidBackup()) return@withContext
+            backupToDownloadsBlocking()
+        }
+    }
+
     // ─── Downloads (MediaStore) backup/restore ─────────────────────────
 
     private fun backupToDownloadsBlocking() {
@@ -169,6 +182,18 @@ class LocalModelManager(private val context: Context) {
             false
         }
     }.getOrDefault(false)
+
+    /** True when a valid backup already exists in Downloads (size check only). */
+    private fun hasValidBackup(): Boolean =
+        context.contentResolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Downloads.SIZE),
+            "${MediaStore.Downloads.DISPLAY_NAME}=?",
+            arrayOf(DOWNLOAD_FILE_NAME),
+            null
+        )?.use { c ->
+            c.moveToFirst() && c.getLong(0) >= MIN_VALID_SIZE
+        } ?: false
 
     private fun queryDownloadsUri(): Uri? =
         context.contentResolver.query(
