@@ -19,6 +19,7 @@ import android.os.Looper
 import com.voxyn.MainActivity
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ConversationSession
+import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceInputService
 import com.voxyn.voice.VoskModelProvider
@@ -70,6 +71,7 @@ class WakeWordService : Service() {
     private val tts: TextToSpeechManager by inject()
     private val session: ConversationSession by inject()
     private val modelProvider: VoskModelProvider by inject()
+    private val parakeetModelManager: ParakeetModelManager by inject()
 
     private var model        : Model? = null
     private var recognizer   : Recognizer? = null
@@ -248,6 +250,12 @@ class WakeWordService : Service() {
     private fun onWakeTriggered() {
         session.end()
         updateNotification("VOXYN — waking up...")
+        // Pre-load the command recognizer while the activation line is spoken so
+        // the mic is ready from the user's very first word.
+        scope.launch {
+            runCatching { parakeetModelManager.getRecognizer() }
+                .onSuccess { VoxynLogger.i("Parakeet recognizer pre-loaded on wake", "WAKE") }
+        }
         speakActivationThenListen()
     }
 

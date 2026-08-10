@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.Dispatchers
@@ -57,19 +58,33 @@ class LocalModelManager(private val context: Context) {
      * Makes the LLM available without user interaction: verifies the private
      * copy, restores it from Downloads after a reinstall, and as a last resort
      * downloads it in the background so the app is never left without AI.
+     * Pass [allowDownload] = false when the caller only wants the instant
+     * local restore (Downloads / raw storage) path.
      */
-    suspend fun ensureModelAvailable(): Boolean {
+    suspend fun ensureModelAvailable(allowDownload: Boolean = true): Boolean {
         if (isModelPresent()) return true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val restored = withContext(Dispatchers.IO) { restoreFromDownloadsBlocking() }
+            val restored = withContext(Dispatchers.IO) {
+                restoreFromDownloadsBlocking() || restoreFromRawPathBlocking()
+            }
             if (restored) {
                 VoxynLogger.i("Local LLM model restored from Downloads (no re-download)", "AI")
                 return true
             }
+        } else if (withContext(Dispatchers.IO) { restoreFromRawPathBlocking() }) {
+            VoxynLogger.i("Local LLM model restored from shared storage (no re-download)", "AI")
+            return true
         }
+        if (!allowDownload) return false
         VoxynLogger.i("Local LLM model not on device — downloading in background", "AI")
         return downloadModel {}.ok
     }
+
+    /** True when a valid backup row is visible in the MediaStore Downloads collection. */
+    fun hasMediaStoreBackup(): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        queryDownloadsUri() != null
+    }.getOrDefault(false)
 
     /** Streams the model to filesDir; reports 0..1 progress for the active mirror. */
     suspend fun downloadModel(onProgress: (Float) -> Unit): DownloadOutcome = withContext(Dispatchers.IO) {
@@ -80,10 +95,13 @@ class LocalModelManager(private val context: Context) {
         try {
             modelFile.parentFile?.mkdirs()
 
+            val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.part")
             for (url in MODEL_URLS) {
-                val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.part")
-                tmp.delete()
-                var downloadedTotal = 0L
+                if (tmp.length() >= MIN_VALID_SIZE) {
+                    // A full-size .part that never got validated is corrupt — discard it.
+                    tmp.delete()
+                }
+                var downloadedTotal = if (tmp.exists()) tmp.length() else 0L
                 try {
                     val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
@@ -91,16 +109,19 @@ class LocalModelManager(private val context: Context) {
                         readTimeout = 30_000
                         instanceFollowRedirects = true
                         setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant)")
+                        if (downloadedTotal > 0 && downloadedTotal < MIN_VALID_SIZE) {
+                            setRequestProperty("Range", "bytes=$downloadedTotal-")
+                        }
                     }
                     val code = conn.responseCode
-                    if (code != 200) {
+                    if (code != 200 && code != 206) {
                         VoxynLogger.e("Model download HTTP $code from $url", tag = "AI")
                         continue
                     }
 
                     val total = conn.contentLengthLong
                     conn.inputStream.use { input ->
-                        FileOutputStream(tmp).use { out ->
+                        FileOutputStream(tmp, code == 206 && downloadedTotal > 0).use { out ->
                             val buf = ByteArray(128 * 1024)
                             while (true) {
                                 val read = input.read(buf)
@@ -122,7 +143,6 @@ class LocalModelManager(private val context: Context) {
                     tmp.delete()
                     VoxynLogger.e("Model file invalid (${downloadedTotal} bytes) from $url", tag = "AI")
                 } catch (e: Exception) {
-                    tmp.delete()
                     VoxynLogger.e("Model download failed from $url: ${e.message}", tag = "AI")
                 }
             }
@@ -198,6 +218,36 @@ class LocalModelManager(private val context: Context) {
             false
         }
     }.getOrDefault(false)
+
+    /** Direct-storage fallback: Android 11+ needs "All files access" to read free files. */
+    private fun restoreFromRawPathBlocking(): Boolean = runCatching {
+        val backup = rawBackupFile() ?: return false
+        if (!backup.exists() || !backup.canRead() || backup.length() < MIN_VALID_SIZE) return false
+        modelFile.parentFile?.mkdirs()
+        val tmp = File(modelFile.parentFile, "$MODEL_FILE_NAME.restore")
+        tmp.delete()
+        val copied = backup.inputStream().use { input ->
+            FileOutputStream(tmp).use { out -> input.copyTo(out, 128 * 1024) }
+            tmp.length() > MIN_VALID_SIZE
+        }
+        if (copied && isValidModel(tmp) && tmp.renameTo(modelFile)) {
+            true
+        } else {
+            tmp.delete()
+            false
+        }
+    }.getOrDefault(false)
+
+    private fun rawBackupFile(): File? {
+        val candidates = listOf(
+            File(Environment.getExternalStorageDirectory(), "$DOWNLOAD_DIR/$DOWNLOAD_FILE_NAME"),
+            File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "VoxynAI/$DOWNLOAD_FILE_NAME"
+            )
+        )
+        return candidates.firstOrNull { it.exists() && it.canRead() }
+    }
 
     /** True when a valid .task backup already exists in Downloads. */
     private fun hasValidBackup(): Boolean = runCatching {

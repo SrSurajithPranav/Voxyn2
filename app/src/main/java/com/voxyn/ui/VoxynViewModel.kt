@@ -8,6 +8,7 @@ import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.core.PipelineEvent
 import com.voxyn.core.PipelinePhase
 import com.voxyn.engine.VoxynEngine
+import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +40,9 @@ class VoxynViewModel(
 
     private val _localAi = MutableStateFlow(LocalAiUiState())
     val localAi: StateFlow<LocalAiUiState> = _localAi.asStateFlow()
+
+    private val _storagePrompt = MutableStateFlow(false)
+    val storagePrompt: StateFlow<Boolean> = _storagePrompt.asStateFlow()
 
     val asrState: StateFlow<AsrDownloadState> = parakeetModelManager.downloadState
 
@@ -91,6 +95,33 @@ class VoxynViewModel(
         viewModelScope.launch {
             parakeetModelManager.download()
         }
+    }
+
+    /** True only when both offline engines already have their models. */
+    fun modelsPresent(): Boolean =
+        parakeetModelManager.isModelPresent() && localModelManager.isModelPresent()
+
+    /** True when a restorable copy is visible in the MediaStore Downloads collection. */
+    fun hasDownloadsBackup(): Boolean =
+        parakeetModelManager.hasMediaStoreBackup() || localModelManager.hasMediaStoreBackup()
+
+    /** Restore-only pass (no network): called when All-files access gets granted. */
+    fun restoreModelsFromStorage() {
+        viewModelScope.launch {
+            val asrOk = parakeetModelManager.ensureAvailable()
+            val llmOk = localModelManager.ensureModelAvailable(allowDownload = false)
+            if (llmOk) {
+                _localAi.update { it.copy(modelPresent = true, message = "Model restored from Downloads — ready offline.") }
+            }
+            VoxynLogger.i(
+                "Manual restore: ASR=$asrOk LLM=$llmOk",
+                "UI"
+            )
+        }
+    }
+
+    fun showStoragePrompt(show: Boolean) {
+        _storagePrompt.value = show
     }
 
     fun downloadLocalModel() {

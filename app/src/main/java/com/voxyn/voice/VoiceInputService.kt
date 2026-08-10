@@ -175,6 +175,11 @@ class VoiceInputService : Service() {
 
     private fun maybeDownloadAsrModel() {
         scope.launch {
+            // Restore from Downloads / shared storage first — no network needed.
+            if (parakeetModelManager.ensureAvailable()) {
+                VoxynLogger.i("ASR Parakeet model restored — using offline STT now", "VOICE")
+                return@launch
+            }
             parakeetModelManager.download { progress ->
                 val pct = (progress * 100).toInt()
                 VoxynLogger.i("ASR model download $pct%", "VOICE")
@@ -222,10 +227,9 @@ class VoiceInputService : Service() {
     private fun handleSilence(reason: String) {
         if (stopping) return
         if (session.turns.isEmpty()) {
-            // First listen after the wake phrase — 8s of silence returns to IDLE
-            VoxynLogger.i("No command heard ($reason) — back to wake detection", "VOICE")
-            updateNotification("VOXYN — say Hey VOXYN")
-            resumeWakeAndStop()
+            // First listen after the wake phrase — retry once before returning to IDLE
+            // so a slow start or a VAD hiccup doesn't end the conversation prematurely.
+            retryOrGiveUp(reason, REARM_DELAY_MS)
         } else if (session.isWithinWindow()) {
             // Follow-up listen: re-arm once; the second consecutive failure ends the session
             retryOrGiveUp(reason, REARM_DELAY_MS)
@@ -252,6 +256,7 @@ class VoiceInputService : Service() {
         if (consecutiveFailures >= maxAttempts) {
             VoxynLogger.w("Giving up after $consecutiveFailures failed listens ($reason)", "VOICE")
             if (session.turns.isEmpty()) {
+                VoxynLogger.i("No command heard after $maxAttempts attempts — back to wake detection", "VOICE")
                 updateNotification("VOXYN — say Hey VOXYN")
                 resumeWakeAndStop()
             } else {

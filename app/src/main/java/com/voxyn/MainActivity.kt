@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,8 +20,10 @@ import com.voxyn.overlay.OverlayService
 import com.voxyn.ui.MainScreen
 import com.voxyn.ui.theme.VoxynBg
 import com.voxyn.ui.theme.VoxynTheme
+import com.voxyn.ui.VoxynViewModel
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.wake.WakeWordService
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -28,7 +31,9 @@ class MainActivity : ComponentActivity() {
         private const val OVERLAY_PERMISSION_REQUEST = 1001
     }
 
+    private val uiViewModel: VoxynViewModel by viewModel()
     private var micRequestPending = false
+    private var storagePromptShown = false
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -70,7 +75,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = VoxynBg
                 ) {
-                    MainScreen(onStartVoiceInput = ::startVoiceInput)
+                    MainScreen(
+                        onStartVoiceInput = ::startVoiceInput,
+                        onRequestAllFilesAccess = ::requestAllFilesAccess
+                    )
                 }
             }
         }
@@ -89,6 +97,41 @@ class MainActivity : ComponentActivity() {
             == PackageManager.PERMISSION_GRANTED
         ) {
             startVoxynServices()
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+            // The user just granted All-files access — restore instantly.
+            uiViewModel.restoreModelsFromStorage()
+        }
+        maybePromptForStorageAccess()
+    }
+
+    private fun maybePromptForStorageAccess() {
+        if (storagePromptShown) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (Environment.isExternalStorageManager()) return
+        if (uiViewModel.modelsPresent()) return
+        if (uiViewModel.hasDownloadsBackup()) return
+        storagePromptShown = true
+        VoxynLogger.w("Model backup present on device but hidden — prompting for All-files access", "MAIN")
+        uiViewModel.showStoragePrompt(true)
+    }
+
+    private fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (e: Exception) {
+                VoxynLogger.e("All-files access settings failed: ${e.message}", tag = "MAIN")
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 

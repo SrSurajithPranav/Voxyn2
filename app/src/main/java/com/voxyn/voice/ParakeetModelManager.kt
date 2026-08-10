@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
@@ -202,16 +203,25 @@ class ParakeetModelManager(private val context: Context) {
             backupIfMissing()
             return true
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        return withContext(Dispatchers.IO) {
-            val restored = restoreFromDownloadsBlocking()
-            if (restored) {
-                VoxynLogger.i("ASR: Parakeet model restored from Downloads (no re-download)", "ASR")
-                _state.update { it.copy(modelPresent = true, message = "Speech model restored from Downloads — ready.") }
+        val restored = withContext(Dispatchers.IO) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                restoreFromDownloadsBlocking() || restoreFromRawPathBlocking()
+            } else {
+                restoreFromRawPathBlocking()
             }
-            restored
         }
+        if (restored) {
+            VoxynLogger.i("ASR: Parakeet model restored from Downloads (no re-download)", "ASR")
+            _state.update { it.copy(modelPresent = true, message = "Speech model restored from Downloads — ready.") }
+        }
+        return restored
     }
+
+    /** True when the full Parakeet backup set is visible in MediaStore Downloads. */
+    fun hasMediaStoreBackup(): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        MODEL_FILES.all { queryDownloadsUri(it.name) != null }
+    }.getOrDefault(false)
 
     /** Backs the model up to Downloads only when a valid copy is not there yet. */
     suspend fun backupIfMissing() {
@@ -308,20 +318,60 @@ class ParakeetModelManager(private val context: Context) {
         for (f in MODEL_FILES) {
             val target = file(f.name)
             if (target.length() >= minSize(f)) continue
-            val uri = queryDownloadsUri(f.name) ?: return false
             val tmp = File(asrDir(), "${f.name}.restore")
             tmp.delete()
-            val copied = context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tmp).use { out -> input.copyTo(out, 128 * 1024) }
-                tmp.length() >= minSize(f)
-            } ?: false
-            if (!copied || !tmp.renameTo(target)) {
+            val copied = runCatching {
+                val uri = queryDownloadsUri(f.name)
+                if (uri == null) false else context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(tmp).use { out -> input.copyTo(out, 128 * 1024) }
+                    tmp.length() >= minSize(f)
+                } ?: false
+            }.getOrDefault(false)
+            if (!copied) {
                 tmp.delete()
-                return false
+                val raw = restoreFileFromRawPathBlocking(f)
+                if (!raw) return false
+                continue
             }
+            if (!tmp.renameTo(target)) return false
         }
         isModelPresent()
     }.getOrDefault(false)
+
+    /** Direct-storage fallback (Android 11+ needs "All files access" to read free files). */
+    private fun restoreFromRawPathBlocking(): Boolean = runCatching {
+        asrDir().mkdirs()
+        for (f in MODEL_FILES) {
+            val target = file(f.name)
+            if (target.length() >= minSize(f)) continue
+            if (!restoreFileFromRawPathBlocking(f)) return false
+        }
+        isModelPresent()
+    }.getOrDefault(false)
+
+    private fun restoreFileFromRawPathBlocking(f: ModelFile): Boolean = runCatching {
+        val backup = rawAsrFile(f.name) ?: return false
+        if (!backup.exists() || !backup.canRead() || backup.length() < minSize(f)) return false
+        val tmp = File(asrDir(), "${f.name}.restore")
+        tmp.delete()
+        val copied = backup.inputStream().use { input ->
+            FileOutputStream(tmp).use { out -> input.copyTo(out, 128 * 1024) }
+            tmp.length() >= minSize(f)
+        }
+        copied && tmp.renameTo(file(f.name))
+    }.getOrDefault(false)
+
+    private fun rawAsrFile(name: String): File? {
+        val display = "$DOWNLOAD_DISPLAY_PREFIX$name"
+        val candidates = listOf(
+            File(Environment.getExternalStorageDirectory(), "$BACKUP_DIR/$display"),
+            File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "VoxynAI/asr/$display"
+            )
+        )
+        return candidates.firstOrNull { it.exists() && it.canRead() }
+    }
 
     private fun hasValidBackup(name: String): Boolean = runCatching {
         val uri = queryDownloadsUri(name) ?: return false

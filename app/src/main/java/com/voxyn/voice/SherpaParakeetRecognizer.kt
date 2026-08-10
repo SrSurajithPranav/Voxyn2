@@ -59,14 +59,19 @@ class SherpaParakeetRecognizer(
 
     override fun start(listener: SpeechRecognizerEngine.Listener): Boolean {
         if (isRunning) return true
-        val recognizer = modelManager.getRecognizer()
-        if (recognizer == null) {
-            VoxynLogger.e("ASR model unavailable", tag = "ASR")
-            return false
-        }
         this.listener = listener
         isRunning = true
-        job = scope.launch { captureAndRecognize(recognizer) }
+        job = scope.launch {
+            // The ~650 MB model load is heavy; never block the caller (main thread).
+            val recognizer = modelManager.getRecognizer()
+            if (recognizer == null) {
+                VoxynLogger.e("ASR model unavailable", tag = "ASR")
+                this@SherpaParakeetRecognizer.listener?.onError("ASR model unavailable")
+                isRunning = false
+                return@launch
+            }
+            captureAndRecognize(recognizer)
+        }
         return true
     }
 

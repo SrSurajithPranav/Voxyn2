@@ -33,11 +33,13 @@ private val DIM_COLOR     = Color(0xFF546E7A)
 @Composable
 fun MainScreen(
     onStartVoiceInput: () -> Unit,
+    onRequestAllFilesAccess: () -> Unit,
     viewModel: VoxynViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsState()
     val localAi by viewModel.localAi.collectAsState()
     val asrState by viewModel.asrState.collectAsState()
+    val storagePrompt by viewModel.storagePrompt.collectAsState()
     var input by remember { mutableStateOf("") }
 
     Box(
@@ -72,6 +74,29 @@ fun MainScreen(
                 },
                 onStartVoiceInput = onStartVoiceInput,
                 onInterrupt = { viewModel.interrupt() }
+            )
+        }
+
+        if (storagePrompt) {
+            AlertDialog(
+                onDismissRequest = { viewModel.showStoragePrompt(false) },
+                title = { Text("Restore models without re-downloading?") },
+                text = {
+                    Text(
+                        "VOXYN found model files in your Downloads folder, but Android " +
+                            "hides them from apps. Allow \"All files access\" so VOXYN can " +
+                            "restore the speech + AI models instantly — no 1.2 GB re-download."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.showStoragePrompt(false)
+                        onRequestAllFilesAccess()
+                    }) { Text("Allow") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.showStoragePrompt(false) }) { Text("Later") }
+                }
             )
         }
     }
