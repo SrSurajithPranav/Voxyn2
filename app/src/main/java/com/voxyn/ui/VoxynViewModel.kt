@@ -78,7 +78,7 @@ class VoxynViewModel(
     fun downloadLocalModel() {
         if (_localAi.value.downloading) return
         viewModelScope.launch {
-            _localAi.update { it.copy(downloading = true, progress = 0f, message = "Downloading AI model (~1.4 GB)...") }
+            _localAi.update { it.copy(downloading = true, progress = 0f, message = "Downloading AI model (~0.6 GB)...") }
             val outcome = localModelManager.downloadModel { progress ->
                 _localAi.update { it.copy(progress = progress) }
             }

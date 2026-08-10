@@ -20,6 +20,10 @@ class SpeechNormalizer(private val appCatalog: AppCatalog) {
         val original = raw.trim().lowercase()
         var t = original
 
+        // Vosk emits [unk] for out-of-vocabulary words; they only confuse intent
+        // matching ("whats the time in [unk]"). Drop them before anything else.
+        t = t.replace("[unk]", " ").replace(Regex("\\s+"), " ").trim()
+
         // Wake-word residue
         t = t.replace(Regex("^\\s*(hey|hi|okay)\\s+voxyn[,.!]?\\s*"), "")
         t = t.replace(Regex("^\\s*voxyn[,.!]?\\s*"), "")

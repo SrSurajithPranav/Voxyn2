@@ -239,7 +239,14 @@ class VoiceInputService : Service() {
                     isListening = false
                     releaseAudioFocus()
                     if (best != null) {
-                        handleResult(best)
+                        // Vosk-only noise ("[unk]") is not a command — retry listening
+                        // instead of feeding garbage to the engine.
+                        val meaningful = best.replace("[unk]", "").trim()
+                        if (meaningful.isEmpty()) {
+                            retryOrGiveUp("no-speech", REARM_DELAY_MS)
+                        } else {
+                            handleResult(best)
+                        }
                     } else {
                         handleSilence("no-speech")
                     }

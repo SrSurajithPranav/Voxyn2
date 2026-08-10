@@ -26,17 +26,18 @@ data class DownloadOutcome(val ok: Boolean, val message: String)
  *
  * The model is stored in the app's private filesDir, but a copy is ALSO backed
  * up to the public Downloads folder (MediaStore, no permission needed). That way
- * uninstalling/reinstalling the app does NOT lose the ~1.4 GB model — after a
+ * uninstalling/reinstalling the app does NOT lose the ~0.6 GB model — after a
  * reinstall VOXYN restores it from Downloads instead of re-downloading.
  */
 class LocalModelManager(private val context: Context) {
 
     companion object {
-        // Gemma 2B int4 (GPU delegate). If one mirror dies, the next is tried.
+        // Gemma 3 1B int4 — a real MediaPipe .task bundle (zip). The earlier mirrors
+        // served raw TFLite .bin files, which MediaPipe GenAI rejects with
+        // "Unable to open zip archive". If one mirror dies, the next is tried.
         val MODEL_URLS = listOf(
-            "https://huggingface.co/vba01/gemma-2b-it-gpu-int4/resolve/main/gemma-2b-it-gpu-int4.bin",
-            "https://huggingface.co/autoocrat0413/gemma-2b-it-gpu-int4-mediapipe/resolve/main/gemma-2b-it-gpu-int4.bin",
-            "https://huggingface.co/autoocrat0413/gemma-2b-it-gpu-int4-mediapipe/resolve/main/gemma-2b-it-cpu-int4.bin"
+            "https://huggingface.co/JafarKhan1989/gemma-3-1b-mediapipe/resolve/main/gemma3-1B-it-int4.task",
+            "https://huggingface.co/gummybear2555/Gemma-3n-E2B-it-int4/resolve/main/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task"
         )
         const val MODEL_FILE_NAME   = "llm.task"
         const val DOWNLOAD_FILE_NAME = "voxyn-llm.task"
@@ -128,7 +129,7 @@ class LocalModelManager(private val context: Context) {
     /**
      * Backs the model up to Downloads only when no valid copy exists there yet.
      * Used on app start when the model is already on device (e.g. after upgrading
-     * from a build that didn't create the backup) — avoids copying ~1.4 GB every launch.
+     * from a build that didn't create the backup) — avoids copying ~0.6 GB every launch.
      */
     suspend fun backupIfMissing() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -183,17 +184,34 @@ class LocalModelManager(private val context: Context) {
         }
     }.getOrDefault(false)
 
-    /** True when a valid backup already exists in Downloads (size check only). */
-    private fun hasValidBackup(): Boolean =
-        context.contentResolver.query(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Downloads.SIZE),
-            "${MediaStore.Downloads.DISPLAY_NAME}=?",
-            arrayOf(DOWNLOAD_FILE_NAME),
-            null
-        )?.use { c ->
-            c.moveToFirst() && c.getLong(0) >= MIN_VALID_SIZE
-        } ?: false
+    /** True when a valid .task backup already exists in Downloads. */
+    private fun hasValidBackup(): Boolean = runCatching {
+        val uri = queryDownloadsUri() ?: return false
+        val fd = context.contentResolver.openAssetFileDescriptor(uri, "r") ?: return false
+        fd.use { afd ->
+            val length = afd.length
+            if (length < MIN_VALID_SIZE) return false
+            val input = java.io.FileInputStream(afd.fileDescriptor)
+            input.use { ins ->
+                val head = ByteArray(8)
+                var h = 0
+                while (h < 8) {
+                    val n = ins.read(head, h, 8 - h)
+                    if (n < 0) break
+                    h += n
+                }
+                ins.channel.position(length - 22)
+                val tail = ByteArray(22)
+                var t = 0
+                while (t < 22) {
+                    val n = ins.read(tail, t, 22 - t)
+                    if (n < 0) break
+                    t += n
+                }
+                isZipTask(head, tail)
+            }
+        }
+    }.getOrDefault(false)
 
     private fun queryDownloadsUri(): Uri? =
         context.contentResolver.query(
@@ -208,16 +226,27 @@ class LocalModelManager(private val context: Context) {
             } else null
         }
 
-    /** Loose validation: MediaPipe flatbuffer (TFL3), task zip (PK) or GGUF. */
+    /**
+     * MediaPipe LLM .task files are zip archives: a local-file-header ("PK\u0003\u0004",
+     * usually preceded by a 4-byte flatbuffer header) plus an end-of-central-directory
+     * ("PK\u0005\u0006") at the very end. Requiring both rejects raw TFLite flatbuffers
+     * and truncated downloads, which MediaPipe cannot open.
+     */
+    private fun isZipTask(head: ByteArray, tail: ByteArray): Boolean =
+        head.size >= 6 && tail.size == 22 &&
+            (String(head, 0, 2, Charsets.US_ASCII) == "PK" ||
+                String(head, 4, 2, Charsets.US_ASCII) == "PK") &&
+            String(tail, 0, 4, Charsets.US_ASCII) == "PK\u0005\u0006"
+
     private fun isValidModel(file: File): Boolean {
         if (!file.exists() || file.length() < MIN_VALID_SIZE) return false
         return runCatching {
             val head = file.inputStream().use { it.readNBytes(8) }
-            head.size == 8 && (
-                String(head, 4, 4, Charsets.US_ASCII) == "TFL3" ||
-                String(head, 0, 2, Charsets.US_ASCII) == "PK" ||
-                String(head, 0, 4, Charsets.US_ASCII) == "GGUF"
-                )
+            val tail = file.inputStream().use { ins ->
+                ins.skip(file.length() - 22)
+                ins.readNBytes(22)
+            }
+            isZipTask(head, tail)
         }.getOrDefault(false)
     }
 }
