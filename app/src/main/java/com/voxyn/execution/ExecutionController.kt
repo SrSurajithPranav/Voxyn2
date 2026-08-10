@@ -524,7 +524,7 @@ class ExecutionController(
             return PhaseResult.Failure("What should I say?", canFallback = false)
         }
         return if (channel == "whatsapp") composer.composeWhatsApp(phone, message)
-        else composer.composeSms(phone, message)
+        else composer.sendSms(phone, message)
     }
 
     private fun sendWhatsApp(params: Map<String, String>): PhaseResult<String> {

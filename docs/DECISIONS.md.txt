@@ -594,3 +594,48 @@ All risky actions (CALL_CONTACT, SEND_MESSAGE, SEND_WHATSAPP_MESSAGE) go through
 ## Review Date
 
 2026-08-10
+
+---
+
+# ADR-012
+
+## Title
+
+SMS auto-send via SmsManager; WhatsApp remains compose-only
+
+## Status
+
+Accepted (supersedes ADR-011's SMS delivery choice)
+
+## Context
+
+The user wants real auto-send for messages. SMS can be delivered programmatically
+with the SEND_SMS runtime permission, so compose-only SMS is no longer the right
+default. WhatsApp still cannot auto-send to arbitrary personal accounts through
+any public API.
+
+## Alternatives Considered
+
+1. Keep SMS compose-only — rejected: user explicitly requested auto-send.
+2. Auto-send via accessibility/tap automation — rejected: brittle and only works while the target app is open.
+
+## Decision
+
+SMS messages are auto-sent with `SmsManager.sendTextMessage()` after the user
+confirms the action ("Just to confirm — should I message Rahul? Say yes.").
+The manifest requests `SEND_SMS` at app launch; if the permission is missing,
+VOXYN answers "I need SMS permission to auto-send" instead of silently doing
+nothing. A result broadcast logs actual send status (`SENT` / failure).
+
+WhatsApp delivery stays compose-only (`wa.me` deep link → `ACTION_SEND`
+fallback) and the TTS is honest: "Opened WhatsApp to Rahul."
+
+## Consequences
+
+- `SEND_SMS` is added to the manifest and runtime permission flow.
+- The confirmation gate still applies — auto-send never happens silently.
+- WhatsApp auto-send and group targeting remain documented limitations.
+
+## Review Date
+
+2026-08-10

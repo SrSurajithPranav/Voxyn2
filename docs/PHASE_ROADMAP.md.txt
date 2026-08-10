@@ -643,7 +643,7 @@ Documentation remains current.
 
 Recently completed:
 
-✓ Communication & Messaging (contacts, SMS/WhatsApp compose, confirmation flow) — see CURRENT_STATE.md and DECISIONS.md (ADR-011)
+✓ Communication & Messaging (contacts, SMS auto-send, WhatsApp compose, confirmation flow) — see CURRENT_STATE.md and DECISIONS.md (ADR-011/012)
 
 Remaining communication work:
 

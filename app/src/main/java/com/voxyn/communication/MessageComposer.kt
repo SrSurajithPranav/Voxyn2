@@ -1,16 +1,24 @@
 package com.voxyn.communication
 
+import android.Manifest
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.telephony.SmsManager
+import androidx.core.content.ContextCompat
 import com.voxyn.core.PhaseResult
 import com.voxyn.utils.VoxynLogger
 
 /**
- * Composes and launches message intents (SMS/WhatsApp).
- * Uses ACTION_SENDTO for SMS (no SEND_SMS permission needed; user taps send).
- * Uses wa.me deep link for WhatsApp when possible, falls back to ACTION_SEND.
- * All delivery is "compose" style — the user confirms by tapping Send in the target app.
+ * Delivers messages. SMS is auto-sent via SmsManager (SEND_SMS permission,
+ * after the user confirms the action). WhatsApp has no public API for
+ * auto-sending to personal accounts, so it opens the chat prefilled
+ * (wa.me deep link when a country code is known, ACTION_SEND otherwise).
  */
 class MessageComposer(
     private val context: Context,
@@ -18,25 +26,57 @@ class MessageComposer(
 ) {
 
     private val TAG = "MESSAGE_COMPOSER"
+    private var smsRequestCode = 1
 
     /**
-     * Sends an SMS via ACTION_SENDTO sms:<number> with body prefilled.
-     * Opens the default SMS app with the message ready to send.
+     * Auto-sends an SMS. Requires SEND_SMS permission — callers guarantee the
+     * confirmation flow already ran; this method never sends silently on its own.
      */
-    fun composeSms(phoneNumber: String, message: String): PhaseResult<String> {
+    fun sendSms(phoneNumber: String, message: String): PhaseResult<String> {
         val digits = phoneNumber.replace(Regex("[^0-9+]"), "")
-        val uri = Uri.parse("smsto:$digits")
-        val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
-            putExtra("sms_body", message)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            VoxynLogger.w("SEND_SMS permission missing — cannot auto-send", TAG)
+            return PhaseResult.Failure("I need SMS permission to auto-send. Grant it in app settings.", canFallback = false)
         }
-        if (intent.resolveActivity(context.packageManager) != null) {
-            context.startActivity(intent)
-            VoxynLogger.i("COMMUNICATION: recipient=$phoneNumber channel=SMS action=SEND_MESSAGE status=COMPOSE_OPENED", TAG)
-            return PhaseResult.Success("Opened SMS to $phoneNumber")
+
+        val sentAction = "com.voxyn.action.SMS_SENT_$smsRequestCode"
+        val sentPi = PendingIntent.getBroadcast(
+            context,
+            smsRequestCode,
+            Intent(sentAction),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receivedContext: Context?, intent: Intent?) {
+                when (resultCode) {
+                    Activity.RESULT_OK ->
+                        VoxynLogger.i("COMMUNICATION: recipient=$digits channel=SMS action=SEND_MESSAGE status=SENT", TAG)
+                    else ->
+                        VoxynLogger.w("SMS send failed resultCode=$resultCode", TAG)
+                }
+                runCatching { receivedContext?.unregisterReceiver(this) }
+            }
         }
-        VoxynLogger.w("No SMS app found", TAG)
-        return PhaseResult.Failure("No SMS app installed", canFallback = false)
+        val registered = runCatching {
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(sentAction),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }.isSuccess
+
+        return try {
+            @Suppress("DEPRECATION")
+            SmsManager.getDefault().sendTextMessage(digits, null, message, sentPi, null)
+            smsRequestCode++
+            VoxynLogger.i("COMMUNICATION: recipient=$digits channel=SMS action=SEND_MESSAGE status=SENDING", TAG)
+            PhaseResult.Success("Message sent to $digits")
+        } catch (e: Exception) {
+            if (registered) runCatching { context.unregisterReceiver(receiver) }
+            VoxynLogger.e("SMS send threw", e, TAG)
+            PhaseResult.Failure("SMS failed to send.", canFallback = true)
+        }
     }
 
     /**
@@ -74,14 +114,6 @@ class MessageComposer(
 
         VoxynLogger.w("WhatsApp not installed", TAG)
         return PhaseResult.Failure("WhatsApp is not installed.", canFallback = false)
-    }
-
-    /**
-     * Compose based on resolved channel.
-     */
-    fun compose(channel: String, phoneNumber: String, message: String): PhaseResult<String> = when (channel) {
-        "whatsapp" -> composeWhatsApp(phoneNumber, message)
-        else -> composeSms(phoneNumber, message)
     }
 
     fun isWhatsAppInstalled(): Boolean = policy.isWhatsAppInstalled()

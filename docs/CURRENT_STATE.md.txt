@@ -258,7 +258,7 @@ Current completed or partially completed functionality.
 
 ✓ Contact resolution (Android Contacts + aliases)
 
-✓ SMS / WhatsApp compose messaging (with confirmation)
+✓ SMS auto-send + WhatsApp compose messaging (with confirmation)
 
 ✓ Confirmation (yes / no) flow
 
@@ -448,7 +448,7 @@ Current implementation does not yet support:
 
 Full proactive assistance
 
-Automatic (non-compose) message sending — delivery opens SMS/WhatsApp prefilled and the user taps Send
+WhatsApp auto-send — not possible via public APIs; VOXYN opens the chat prefilled and the user taps Send (SMS auto-sends after confirmation)
 
 WhatsApp group messaging — routed and parsed but returns "not supported yet" (no reliable public API)
 

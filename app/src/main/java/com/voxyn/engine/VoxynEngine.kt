@@ -899,7 +899,7 @@ class VoxynEngine(
             "BRIGHTNESS_DOWN"      -> "Dimmed."
             "LOCK_PHONE"           -> "Locking."
             "MODE_ACTIVATE"        -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} mode activated."
-            "SEND_MESSAGE"         -> "Opened message to ${params["recipient"] ?: "contact"}."
+            "SEND_MESSAGE"         -> "Message sent to ${params["recipient"] ?: "contact"}."
             "SEND_WHATSAPP_MESSAGE" -> "Opened WhatsApp to ${params["recipient"] ?: "contact"}."
             "MESSAGE_GROUP"        -> "Done."
             "CONTACT_LOOKUP"       -> "Here's the contact."
