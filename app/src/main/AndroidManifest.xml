@@ -51,6 +51,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Voxyn"
         android:hardwareAccelerated="true"
+        android:largeHeap="true"
         android:requestLegacyExternalStorage="true">
 
         <activity

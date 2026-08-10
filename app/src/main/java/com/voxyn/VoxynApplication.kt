@@ -60,17 +60,6 @@ class VoxynApplication : Application() {
                 else "ASR model not available — Vosk fallback until download completes",
                 "APP"
             )
-            if (asrOk) {
-                // Pre-load the ~650 MB recognizer in the background so the first
-                // "Hey VOXYN" command is captured from the very first word.
-                val t0 = System.currentTimeMillis()
-                val rec = runCatching { parakeetManager.getRecognizer() }.getOrNull()
-                VoxynLogger.i(
-                    if (rec != null) "ASR Parakeet recognizer pre-loaded (${System.currentTimeMillis() - t0} ms)"
-                    else "ASR Parakeet recognizer pre-load failed",
-                    "APP"
-                )
-            }
         }
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val llmOk = runCatching {
