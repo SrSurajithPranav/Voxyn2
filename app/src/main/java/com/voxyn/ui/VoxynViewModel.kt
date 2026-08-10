@@ -3,6 +3,8 @@ package com.voxyn.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.voxyn.ai.LocalModelManager
+import com.voxyn.voice.AsrDownloadState
+import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.core.PipelineEvent
 import com.voxyn.core.PipelinePhase
 import com.voxyn.engine.VoxynEngine
@@ -28,7 +30,8 @@ data class LocalAiUiState(
 
 class VoxynViewModel(
     private val engine: VoxynEngine,
-    private val localModelManager: LocalModelManager
+    private val localModelManager: LocalModelManager,
+    private val parakeetModelManager: ParakeetModelManager
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VoxynUiState())
@@ -37,11 +40,14 @@ class VoxynViewModel(
     private val _localAi = MutableStateFlow(LocalAiUiState())
     val localAi: StateFlow<LocalAiUiState> = _localAi.asStateFlow()
 
+    val asrState: StateFlow<AsrDownloadState> = parakeetModelManager.downloadState
+
     init {
         viewModelScope.launch {
             engine.events.collect { event -> handleEvent(event) }
         }
         refreshLocalAi()
+        refreshAsr()
     }
 
     fun submit(input: String) {
@@ -72,6 +78,18 @@ class VoxynViewModel(
                 // make sure a copy exists in Downloads so it survives uninstall/reinstall.
                 localModelManager.backupIfMissing()
             }
+        }
+    }
+
+    fun refreshAsr() {
+        viewModelScope.launch {
+            parakeetModelManager.ensureAvailable()
+        }
+    }
+
+    fun downloadAsrModel() {
+        viewModelScope.launch {
+            parakeetModelManager.download()
         }
     }
 

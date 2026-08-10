@@ -21,6 +21,8 @@ import com.voxyn.perception.SpeechNormalizer
 import com.voxyn.router.RequestRouter
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.voice.ConversationSession
+import com.voxyn.voice.ParakeetModelManager
+import com.voxyn.voice.SpeechRecognizerEngineProvider
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoskModelProvider
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +43,8 @@ val appModule = module {
     single { TextToSpeechManager(androidContext()) }
     single { ConversationSession() }
     single { VoskModelProvider(androidContext()) }
+    single { ParakeetModelManager(androidContext()) }
+    single { SpeechRecognizerEngineProvider(androidContext(), get(), get(), get()) }
 
     // ── Perception & Routing ─────────────────────────────────────────
     single { SpeechNormalizer(get()) }
@@ -91,5 +95,5 @@ val appModule = module {
     }
 
     // ── UI ────────────────────────────────────────────────────────────
-    viewModel { VoxynViewModel(engine = get(), localModelManager = get()) }
+    viewModel { VoxynViewModel(engine = get(), localModelManager = get(), parakeetModelManager = get()) }
 }

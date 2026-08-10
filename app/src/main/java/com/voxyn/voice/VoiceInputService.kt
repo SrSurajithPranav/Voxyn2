@@ -8,16 +8,12 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
-import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import com.voxyn.MainActivity
-import com.voxyn.apps.AppCatalog
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.wake.WakeWordService
@@ -27,19 +23,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
 import org.koin.android.ext.android.inject
-import org.vosk.Recognizer
 
 /**
- * VoiceInputService — listens for a spoken command using the bundled offline
- * Vosk model and runs the engine.
+ * VoiceInputService — listens for a spoken command through the active
+ * SpeechRecognizerEngine (sherpa-onnx/Parakeet, with Vosk as a fallback) and
+ * runs the engine.
  *
- * Google's SpeechRecognizer returns ERROR_TOO_MANY_REQUESTS on some devices, so
- * the command path uses Vosk directly (the same offline model as the wake word).
  * After a command the conversation stays open for [ConversationSession.windowMs]:
  * the service re-arms listening for follow-up commands without the wake phrase.
  * When the window expires it says "Standing by." and asks WakeWordService to
@@ -57,38 +48,10 @@ class VoiceInputService : Service() {
         const val NOTIFICATION_ID        = 3002
 
         private const val START_DELAY_MS          = 200L
-        private const val SAMPLE_RATE             = 16000
-        private const val SILENCE_TIMEOUT_MS      = 8_000L
-        private const val ENDPOINT_SILENCE_MS     = 1_200L
         private const val REARM_DELAY_MS          = 1_000L
         private const val FIRST_COMMAND_MAX_ATTEMPTS = 2
         private const val MAX_CONSECUTIVE_FAILURES   = 2
         private const val PIPELINE_MAX_WAIT_MS    = 60_000L
-
-        private val COMMAND_WORDS = listOf(
-            "open", "launch", "start", "stop", "turn", "on", "off", "enable", "disable",
-            "set", "change", "adjust", "increase", "decrease", "raise", "lower", "volume",
-            "up", "down", "louder", "quieter", "mute", "silent", "vibrate", "ringer",
-            "normal", "mode", "flashlight", "light", "torch", "wifi", "wi", "fi",
-            "bluetooth", "brightness", "screen", "screenshot", "capture", "lock", "phone",
-            "call", "message", "messages", "send", "play", "pause", "next", "previous",
-            "music", "song", "track", "navigate", "navigation", "direction", "alarm",
-            "timer", "minute", "minutes", "second", "seconds", "hour", "hours", "clock",
-            "am", "pm", "date", "today", "time", "what", "who", "when", "where", "how",
-            "why", "is", "are", "your", "you", "my", "name", "weather", "hello", "hi",
-            "hey", "thanks", "thank", "welcome", "help", "please", "okay", "yes", "no",
-            "cancel", "go", "back", "home", "scroll", "swipe", "read", "notifications",
-            "remember", "save", "and", "then", "the", "for", "me", "to", "it", "that",
-            "this", "with", "in", "of", "wanna", "want", "voxyn"
-        )
-
-        private val NUMBER_WORDS = listOf(
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
-            "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-            "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty",
-            "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
-            "percent", "degrees"
-        )
     }
 
     private val scope       = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -96,12 +59,12 @@ class VoiceInputService : Service() {
     private val engine: VoxynEngine by inject()
     private val session: ConversationSession by inject()
     private val tts: TextToSpeechManager by inject()
-    private val modelProvider: VoskModelProvider by inject()
-    private val appCatalog: AppCatalog by inject()
+    private val engineProvider: SpeechRecognizerEngineProvider by inject()
+    private val parakeetModelManager: ParakeetModelManager by inject()
 
-    private var listenJob           : Job? = null
-    private var audioManager        : AudioManager? = null
-    private var audioFocusRequest   : AudioFocusRequest? = null
+    private var activeEngine      : SpeechRecognizerEngine? = null
+    private var audioManager      : AudioManager? = null
+    private var audioFocusRequest : AudioFocusRequest? = null
     private var conversationWatchdog: Runnable? = null
     private var consecutiveFailures = 0
 
@@ -133,7 +96,8 @@ class VoiceInputService : Service() {
     override fun onDestroy() {
         stopping = true
         cancelWatchdog()
-        listenJob?.cancel()
+        activeEngine?.stop()
+        activeEngine = null
         releaseAudioFocus()
         scope.cancel()
         VoxynLogger.i("VoiceInputService destroyed", "VOICE")
@@ -148,154 +112,77 @@ class VoiceInputService : Service() {
         updateNotification("VOXYN — speak your command")
 
         requestAudioFocus()
-        listenJob?.cancel()
-        listenJob = scope.launch {
-            val model = modelProvider.getModel()
-            if (model == null) {
-                mainHandler.post {
-                    if (stopping) return@post
-                    isListening = false
-                    releaseAudioFocus()
-                    updateNotification("VOXYN — voice model unavailable")
-                    tts.speak("Voice model is not available.")
-                    mainHandler.postDelayed({ resumeWakeAndStop() }, 1500L)
-                }
-                return@launch
+
+        // First-time setup: if Parakeet isn't downloaded yet, fetch it in the
+        // background (progressed in the notification) while Vosk handles commands.
+        if (!parakeetModelManager.isModelPresent() && !parakeetModelManager.downloadState.value.downloading) {
+            maybeDownloadAsrModel()
+        }
+
+        val recognizerEngine = engineProvider.currentEngine()
+        activeEngine = recognizerEngine
+        if (!recognizerEngine.start(engineListener)) {
+            mainHandler.post {
+                if (stopping) return@post
+                isListening = false
+                activeEngine = null
+                releaseAudioFocus()
+                updateNotification("VOXYN — voice unavailable")
+                tts.speak("My speech engine is not ready yet.")
+                mainHandler.postDelayed({ resumeWakeAndStop() }, 1_500L)
             }
+            return
+        }
+        VoxynLogger.i("Command listening started (${recognizerEngine::class.simpleName})", "VOICE")
+    }
 
-            var recognizer: Recognizer? = null
-            var audioRecord: AudioRecord? = null
-            try {
-                val bufferSize = AudioRecord.getMinBufferSize(
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
-                ).coerceAtLeast(4096)
+    private val engineListener = object : SpeechRecognizerEngine.Listener {
+        override fun onSpeechDetected() {
+            mainHandler.post {
+                if (!stopping) updateNotification("VOXYN — listening...")
+            }
+        }
 
-                val record = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufferSize * 4
-                ).also { audioRecord = it }
+        override fun onPartial(text: String) {
+            if (text.isBlank()) return
+            mainHandler.post {
+                if (!stopping) updateNotification("VOXYN — \"$text\"...")
+            }
+        }
 
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    throw IllegalStateException("AudioRecord init failed")
-                }
+        override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long) {
+            mainHandler.post {
+                if (stopping) return@post
+                handleResult(text)
+            }
+        }
 
-                val rec = Recognizer(model, SAMPLE_RATE.toFloat(), buildCommandGrammar())
-                recognizer = rec
-                record.startRecording()
+        override fun onNoSpeech() {
+            mainHandler.post {
+                if (stopping) return@post
+                handleSilence("no-speech")
+            }
+        }
 
-                val buffer = ShortArray(bufferSize)
-                val startTime = System.currentTimeMillis()
-                var lastSpeechTime = startTime
-                var hadSpeech = false
-                var finalText: String? = null
-                var lastPartial = ""
-
-                mainHandler.post { updateNotification("Listening...") }
-                VoxynLogger.i("Vosk command listening started (8s silence timeout)", "VOICE")
-
-                while (isActive && isListening && !stopping) {
-                    val read = record.read(buffer, 0, bufferSize)
-                    if (read <= 0) continue
-                    val now = System.currentTimeMillis()
-
-                    if (rec.acceptWaveForm(buffer, read)) {
-                        val text = JSONObject(rec.result).optString("text", "").trim()
-                        if (text.isNotEmpty()) {
-                            finalText = text
-                            hadSpeech = true
-                            lastSpeechTime = now
-                            VoxynLogger.i("Vosk final: \"$text\"", "VOICE")
-                            break
-                        }
-                    } else {
-                        val partial = JSONObject(rec.getPartialResult()).optString("partial", "").trim()
-                        if (partial.isNotEmpty()) {
-                            lastPartial = partial
-                            hadSpeech = true
-                            lastSpeechTime = now
-                            val shown = partial
-                            mainHandler.post { updateNotification("VOXYN — \"$shown\"...") }
-                        }
-                    }
-
-                    if (hadSpeech && now - lastSpeechTime >= ENDPOINT_SILENCE_MS) {
-                        try { rec.result } catch (_: Exception) {}
-                        break
-                    }
-                    if (!hadSpeech && now - startTime >= SILENCE_TIMEOUT_MS) {
-                        break
-                    }
-                    delay(20L)
-                }
-
-                val best = finalText ?: lastPartial.takeIf { it.isNotEmpty() }
-                mainHandler.post {
-                    if (stopping) return@post
-                    isListening = false
-                    releaseAudioFocus()
-                    if (best != null) {
-                        // Vosk-only noise ("[unk]") is not a command — retry listening
-                        // instead of feeding garbage to the engine.
-                        val meaningful = best.replace("[unk]", "").trim()
-                        if (meaningful.isEmpty()) {
-                            retryOrGiveUp("no-speech", REARM_DELAY_MS)
-                        } else {
-                            handleResult(best)
-                        }
-                    } else {
-                        handleSilence("no-speech")
-                    }
-                }
-            } catch (se: SecurityException) {
-                VoxynLogger.e("Microphone permission missing", tag = "VOICE")
-                mainHandler.post {
-                    if (stopping) return@post
-                    isListening = false
-                    releaseAudioFocus()
-                    updateNotification("VOXYN — microphone permission needed")
-                    tts.speak("I need microphone permission. Please allow it in app settings.")
-                    resumeWakeAndStop()
-                }
-            } catch (e: Exception) {
-                VoxynLogger.e("Vosk listening failed: ${e.message}", tag = "VOICE")
-                mainHandler.post {
-                    if (stopping) return@post
-                    isListening = false
-                    releaseAudioFocus()
-                    handleSilence("error")
-                }
-            } finally {
-                try { audioRecord?.stop() } catch (_: Exception) {}
-                try { audioRecord?.release() } catch (_: Exception) {}
-                try { recognizer?.close() } catch (_: Exception) {}
+        override fun onError(message: String) {
+            VoxynLogger.w("Command STT error: $message", "VOICE")
+            mainHandler.post {
+                if (stopping) return@post
+                handleSilence("error")
             }
         }
     }
 
-    /**
-     * JSON grammar that biases the small Vosk model toward words VOXYN actually
-     * understands: the installed app names, their common mis-hearings, command
-     * verbs and numbers. This is what turns "open what's that" into "open whatsapp"
-     * instead of free-form dictation garbage.
-     */
-    private fun buildCommandGrammar(): String = runCatching {
-        val words = linkedSetOf<String>()
-        words.add("[unk]")
-        words.addAll(COMMAND_WORDS)
-        words.addAll(NUMBER_WORDS)
-        words.addAll(appCatalog.grammarTerms())
-        VoxynLogger.i("Command grammar ready: ${words.size} words", "VOICE")
-        val arr = JSONArray()
-        words.forEach { arr.put(it) }
-        arr.toString()
-    }.getOrElse {
-        VoxynLogger.e("Command grammar build failed: ${it.message}", tag = "VOICE")
-        """["[unk]", "open", "turn", "on", "off", "set", "voxyn"]"""
+    private fun maybeDownloadAsrModel() {
+        scope.launch {
+            parakeetModelManager.download { progress ->
+                val pct = (progress * 100).toInt()
+                VoxynLogger.i("ASR model download $pct%", "VOICE")
+                mainHandler.post {
+                    if (!stopping) updateNotification("VOXYN — downloading speech model $pct% (first time only)")
+                }
+            }
+        }
     }
 
     private fun handleResult(text: String) {
@@ -373,7 +260,7 @@ class VoiceInputService : Service() {
             return
         }
 
-        VoxynLogger.w("Vosk $reason — retrying in ${backoffMs}ms (failure #$consecutiveFailures)", "VOICE")
+        VoxynLogger.w("No speech — retrying in ${backoffMs}ms (failure #$consecutiveFailures)", "VOICE")
         updateNotification("VOXYN — retrying...")
         mainHandler.postDelayed({ if (!stopping) beginListening() }, backoffMs)
     }
@@ -408,7 +295,8 @@ class VoiceInputService : Service() {
         if (stopping) return
         stopping = true
         cancelWatchdog()
-        listenJob?.cancel()
+        activeEngine?.stop()
+        activeEngine = null
         releaseAudioFocus()
         try {
             startService(
@@ -447,43 +335,47 @@ class VoiceInputService : Service() {
 
     // ─── Notification ─────────────────────────────────────────────────
 
-    private fun buildNotification(status: String): Notification {
-        val pi = PendingIntent.getActivity(
+    private fun buildNotification(text: String): Notification {
+        val openPi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val stopPi = PendingIntent.getService(
+            this, 1,
+            Intent(this, VoiceInputService::class.java).apply { action = ACTION_STOP_LISTENING },
+            PendingIntent.FLAG_IMMUTABLE
+        )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("VOXYN Voice")
-            .setContentText(status)
+            .setContentTitle("VOXYN")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentIntent(pi)
+            .setContentIntent(openPi)
+            .addAction(Notification.Action.Builder(null, "Stop", stopPi).build())
             .setOngoing(true)
             .setShowWhen(false)
             .build()
     }
 
-    private fun updateNotification(status: String) {
+    private fun updateNotification(text: String) {
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(NOTIFICATION_ID, buildNotification(status))
+            .notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(
-                    NotificationChannel(
-                        CHANNEL_ID,
-                        "VOXYN Voice Input",
-                        NotificationManager.IMPORTANCE_LOW
-                    ).apply {
-                        setShowBadge(false)
-                        setSound(null, null)
-                        enableVibration(false)
-                    }
-                )
-        }
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "VOXYN Assistant",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    setShowBadge(false)
+                    setSound(null, null)
+                    enableVibration(false)
+                }
+            )
     }
 }

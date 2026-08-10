@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.voxyn.ui.theme.*
+import com.voxyn.voice.AsrDownloadState
 import org.koin.androidx.compose.koinViewModel
 
 private val SUCCESS_COLOR = Color(0xFF00E676)
@@ -36,6 +37,7 @@ fun MainScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val localAi by viewModel.localAi.collectAsState()
+    val asrState by viewModel.asrState.collectAsState()
     var input by remember { mutableStateOf("") }
 
     Box(
@@ -54,8 +56,9 @@ fun MainScreen(
             LogPanel(logs = state.logs, modifier = Modifier.weight(1f))
             LocalAiPanel(
                 state = localAi,
+                asrState = asrState,
                 onDownload = { viewModel.downloadLocalModel() },
-                onRefresh = { viewModel.refreshLocalAi() }
+                onAsrDownload = { viewModel.downloadAsrModel() }
             )
             CommandInput(
                 value = input,
@@ -164,49 +167,96 @@ fun LogPanel(logs: List<String>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LocalAiPanel(state: LocalAiUiState, onDownload: () -> Unit, onRefresh: () -> Unit) {
+fun LocalAiPanel(
+    state: LocalAiUiState,
+    asrState: AsrDownloadState,
+    onDownload: () -> Unit,
+    onAsrDownload: () -> Unit
+) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = VoxynSurface,
         border = BorderStroke(1.dp, DIM_COLOR.copy(alpha = 0.3f))
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                "LOCAL AI",
-                color = VoxynCyan,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                fontFamily = FontFamily.Monospace
-            )
-            Text(
-                when {
-                    state.downloading -> "downloading ${(state.progress * 100).toInt()}%"
-                    state.modelPresent -> "model ready — works offline"
-                    state.message.isNotBlank() -> state.message
-                    else -> "not installed — download once, saved in Downloads"
-                },
-                color = if (state.modelPresent) SUCCESS_COLOR else DIM_COLOR,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.weight(1f)
-            )
-            if (!state.modelPresent && !state.downloading) {
-                OutlinedButton(
-                    onClick = onDownload,
-                    border = BorderStroke(1.dp, VoxynCyan),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text("DOWNLOAD", color = VoxynCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "LOCAL AI",
+                    color = VoxynCyan,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    when {
+                        state.downloading -> "downloading ${(state.progress * 100).toInt()}%"
+                        state.modelPresent -> "model ready — works offline"
+                        state.message.isNotBlank() -> state.message
+                        else -> "not installed — download once, saved in Downloads"
+                    },
+                    color = if (state.modelPresent) SUCCESS_COLOR else DIM_COLOR,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f)
+                )
+                if (!state.modelPresent && !state.downloading) {
+                    OutlinedButton(
+                        onClick = onDownload,
+                        border = BorderStroke(1.dp, VoxynCyan),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("DOWNLOAD", color = VoxynCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+                if (state.downloading) {
+                    Text("${(state.progress * 100).toInt()}%", color = VoxynCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
             }
-            if (state.downloading) {
-                Text("${(state.progress * 100).toInt()}%", color = VoxynCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            HorizontalDivider(color = DIM_COLOR.copy(alpha = 0.2f))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "SPEECH",
+                    color = VoxynCyan,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    when {
+                        asrState.downloading -> "downloading ${(asrState.progress * 100).toInt()}%"
+                        asrState.modelPresent -> "Parakeet STT ready — offline"
+                        asrState.message.isNotBlank() -> asrState.message
+                        else -> "not installed — Vosk fallback active"
+                    },
+                    color = if (asrState.modelPresent) SUCCESS_COLOR else DIM_COLOR,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f)
+                )
+                if (!asrState.modelPresent && !asrState.downloading) {
+                    OutlinedButton(
+                        onClick = onAsrDownload,
+                        border = BorderStroke(1.dp, VoxynCyan),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("DOWNLOAD", color = VoxynCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+                if (asrState.downloading) {
+                    Text("${(asrState.progress * 100).toInt()}%", color = VoxynCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
             }
         }
     }

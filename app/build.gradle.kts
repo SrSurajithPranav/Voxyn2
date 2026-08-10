@@ -11,9 +11,14 @@ android {
         applicationId = "com.voxyn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.0.15"
+        versionCode = 17
+        versionName = "1.0.16"
         buildConfigField("String", "CLAUDE_API_KEY", "\"\"")
+        ndk {
+            // The user's device is ARM64; shipping only arm64 keeps the APK small
+            // (sherpa-onnx + onnxruntime + Vosk native libs are ~60 MB per ABI).
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -73,6 +78,9 @@ dependencies {
 
     // On-device LLM (MediaPipe GenAI) — local conversational AI
     implementation(libs.mediapipe.genai)
+
+    // Command STT (sherpa-onnx + NVIDIA Parakeet-TDT 0.6B v3 INT8)
+    implementation(libs.sherpa.onnx)
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
