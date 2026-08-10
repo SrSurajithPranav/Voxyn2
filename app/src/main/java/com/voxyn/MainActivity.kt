@@ -84,6 +84,12 @@ class MainActivity : ComponentActivity() {
         if (Settings.canDrawOverlays(this)) {
             startOverlayService()
         }
+        // If the user just granted mic in Settings, start the wake service now
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            startVoxynServices()
+        }
     }
 
     private fun requestPermissions() {

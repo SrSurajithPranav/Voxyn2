@@ -54,6 +54,14 @@ class VoxynApplication : Application() {
     }
 
     private fun startWakeService() {
+        // Never start the always-on listener without the mic — otherwise it shows
+        // a "listening" notification while hearing nothing.
+        val micOk = (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED)
+        if (!micOk) {
+            VoxynLogger.w("Microphone permission not granted — wake word service NOT started", "APP")
+            return
+        }
         try {
             startForegroundService(
                 Intent(this, WakeWordService::class.java).apply {

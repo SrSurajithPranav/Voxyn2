@@ -80,6 +80,7 @@ class WakeWordService : Service() {
 
     @Volatile private var isDetecting = false
     @Volatile private var stopped     = false
+    @Volatile private var permissionBlocked = false
 
     override fun onCreate() {
         super.onCreate()
@@ -154,6 +155,7 @@ class WakeWordService : Service() {
     private fun startDetection() {
         val m = model ?: return
         if (stopped || isDetecting || session.isActive) return
+        permissionBlocked = false
         isDetecting = true
         updateNotification("VOXYN — say Hey VOXYN")
 
@@ -211,9 +213,9 @@ class WakeWordService : Service() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 VoxynLogger.i("Vosk detection cancelled", "WAKE")
             } catch (se: SecurityException) {
+                permissionBlocked = true
                 VoxynLogger.e("Microphone permission missing — wake word disabled", tag = "WAKE")
-                updateNotification("VOXYN — microphone permission needed")
-                onDetectionFailed()
+                updateNotification("VOXYN — microphone permission needed. Open the app and allow it.")
             } catch (e: Exception) {
                 VoxynLogger.e("Vosk detection loop failed: ${e.message}", tag = "WAKE")
                 onDetectionFailed()
@@ -238,7 +240,7 @@ class WakeWordService : Service() {
 
     private fun onDetectionFailed() {
         isDetecting = false
-        if (stopped) return
+        if (stopped || permissionBlocked) return
         VoxynLogger.w("Detection failed — retrying in ${MODEL_RETRY_MS}ms", "WAKE")
         mainHandler.postDelayed({ startDetection() }, MODEL_RETRY_MS)
     }
