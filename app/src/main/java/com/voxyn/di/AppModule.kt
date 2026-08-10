@@ -7,6 +7,11 @@ import com.voxyn.ai.LocalLlmProvider
 import com.voxyn.ai.LocalModelManager
 import com.voxyn.ai.WorldTimeProvider
 import com.voxyn.apps.AppCatalog
+import com.voxyn.communication.AndroidContactStore
+import com.voxyn.communication.CommunicationPolicy
+import com.voxyn.communication.ContactResolver
+import com.voxyn.communication.ContactStore
+import com.voxyn.communication.MessageComposer
 import com.voxyn.BuildConfig
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.execution.ExecutionController
@@ -39,6 +44,12 @@ val appModule = module {
     single { MemoryRepository(androidContext()) }
     single { ContextEngine(androidContext()) }
 
+    // ── Communication & Messaging ──────────────────────────────────
+    single<ContactStore> { AndroidContactStore(androidContext().contentResolver) }
+    single { ContactResolver(get()) }
+    single { CommunicationPolicy(androidContext()) }
+    single { MessageComposer(androidContext(), get()) }
+
     // ── Voice & TTS ───────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
     single { ConversationSession() }
@@ -68,7 +79,7 @@ val appModule = module {
     // ExecutionController depends on: context, ModeEngine, AppLaunchResolver
     single { AppCatalog(androidContext()) }
     single { AppLaunchResolver(androidContext(), get()) }
-    single { ExecutionController(androidContext(), get(), get()) }
+    single { ExecutionController(androidContext(), get(), get(), get(), get()) }
     single { CapabilityRegistry(getAll<Capability>()) }
 
     // ── AI ────────────────────────────────────────────────────────────
@@ -90,7 +101,8 @@ val appModule = module {
             localKnowledge   = get(),
             localLlm         = get(),
             claudeResolver = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeIntentResolver(it) },
-            modeEngine     = get()
+            modeEngine     = get(),
+            contactResolver = get()
         )
     }
 

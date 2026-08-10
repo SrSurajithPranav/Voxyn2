@@ -99,6 +99,14 @@ class MainActivity : ComponentActivity() {
             != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.RECORD_AUDIO)
         }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.READ_CONTACTS)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
+            != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.CALL_PHONE)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {

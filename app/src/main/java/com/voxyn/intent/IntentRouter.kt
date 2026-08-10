@@ -66,6 +66,47 @@ class IntentRouter {
             Regex("clip\\s*this", RegexOption.IGNORE_CASE)
         )),
 
+        // ─── Communication & Messaging ────────────────────────────────
+        // MESSAGE_GROUP out-ranks SEND_MESSAGE so "message the family group
+        // saying …" is never parsed as a recipient. SEND_WHATSAPP_MESSAGE and
+        // SEND_UNSUPPORTED_CHANNEL out-rank SEND_MESSAGE so the channel is
+        // resolved first. SEND_CURRENT_MESSAGE above stays untouched.
+        IntentDef("MESSAGE_GROUP", 0.95f, listOf(
+            Regex("^(?:send\\s+)?message\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?message\\s+(?:the\\s+)?(.+?\\s+group)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_UNSUPPORTED_CHANNEL", 0.94f, listOf(
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)(.+?)\\s+message\\s+to\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)(.+?)\\s+message\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_WHATSAPP_MESSAGE", 0.93f, listOf(
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^whatsapp\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^whatsapp\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_MESSAGE", 0.92f, listOf(
+            Regex("^(?:text|message)\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:text|message)\\s+(?:saying|that)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:text|message)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^tell\\s+(?!me\\b)(.+?)\\s+(?:that|to)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^tell\\s+(?!me\\b)(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^send\\s+this\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("CONTACT_LOOKUP", 0.91f, listOf(
+            Regex("^(?:get|show|look\\s*up|find|do\\s+i\\s+have)\\s+(.+?)(?:'s)?\\s+(?:number|phone|contact)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:find|look\\s*up)\\s+(?:the\\s+)?(?:contact|number|phone)\\s+(?:for\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:find|look\\s*up)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+
         // ─── WiFi ──────────────────────────────────────────────────────
         IntentDef("WIFI_ON", 0.93f, listOf(
             Regex("turn\\s*(on|enable)\\s*wi.?fi", RegexOption.IGNORE_CASE),
@@ -303,14 +344,18 @@ class IntentRouter {
         var bestConfidence = 0f
 
         for (intent in intents) {
-            for (pattern in intent.patterns) {
+            for ((patternIndex, pattern) in intent.patterns.withIndex()) {
                 val match = pattern.find(trimmed) ?: continue
                 val params = mutableMapOf<String, String>()
 
-                for ((paramName, groupIndex) in intent.paramExtractors) {
-                    runCatching {
-                        val value = match.groupValues.getOrNull(groupIndex)?.trim() ?: ""
-                        if (value.isNotEmpty()) params[paramName] = value
+                if (intent.action in COMMUNICATION_ACTIONS) {
+                    params.putAll(communicationParams(intent.action, match, patternIndex))
+                } else {
+                    for ((paramName, groupIndex) in intent.paramExtractors) {
+                        runCatching {
+                            val value = match.groupValues.getOrNull(groupIndex)?.trim() ?: ""
+                            if (value.isNotEmpty()) params[paramName] = value
+                        }
                     }
                 }
 
@@ -358,4 +403,55 @@ class IntentRouter {
             params = intent.params
         )
     )
+
+    companion object {
+        val COMMUNICATION_ACTIONS = setOf(
+            "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE", "MESSAGE_GROUP",
+            "CONTACT_LOOKUP", "SEND_UNSUPPORTED_CHANNEL"
+        )
+
+        /**
+         * Extracts communication params per matched pattern. Communication
+         * patterns do not share a uniform group layout, so extraction is done
+         * explicitly instead of via IntentDef.paramExtractors.
+         */
+        fun communicationParams(
+            action: String,
+            match: MatchResult,
+            patternIndex: Int
+        ): Map<String, String> = when (action) {
+            "MESSAGE_GROUP" -> mapOf(
+                "group" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                "message" to (match.groupValues.getOrNull(2)?.trim() ?: "")
+            )
+            "SEND_WHATSAPP_MESSAGE" -> buildMap {
+                put("channel", "whatsapp")
+                (match.groupValues.getOrNull(1)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("recipient", it) }
+                (match.groupValues.getOrNull(2)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("message", it) }
+            }
+            "SEND_MESSAGE" -> when (patternIndex) {
+                // "(text|message) saying/that <body>" → body only, recipient unknown
+                1 -> mapOf("message" to (match.groupValues.getOrNull(1)?.trim() ?: ""))
+                // "send this to <recipient>" → recipient + screen-content marker
+                5 -> mapOf(
+                    "recipient" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                    "message" to "<screen>"
+                )
+                else -> buildMap {
+                    put("channel", "sms")
+                    (match.groupValues.getOrNull(1)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("recipient", it) }
+                    (match.groupValues.getOrNull(2)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("message", it) }
+                }
+            }
+            "SEND_UNSUPPORTED_CHANNEL" -> mapOf(
+                "channel" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                "recipient" to (match.groupValues.getOrNull(2)?.trim() ?: ""),
+                "message" to (match.groupValues.getOrNull(3)?.trim() ?: "")
+            )
+            "CONTACT_LOOKUP" -> mapOf(
+                "contact" to (match.groupValues.getOrNull(1)?.trim() ?: "")
+            )
+            else -> emptyMap()
+        }
+    }
 }

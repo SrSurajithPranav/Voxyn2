@@ -6,6 +6,12 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- WhatsApp presence + wa.me deep links for SEND_WHATSAPP_MESSAGE -->
+        <package android:name="com.whatsapp" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />

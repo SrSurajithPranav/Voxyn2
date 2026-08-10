@@ -8,6 +8,8 @@ import com.voxyn.ai.KnowledgeProvider
 import com.voxyn.ai.LocalKnowledgeProvider
 import com.voxyn.ai.LocalLlmProvider
 import com.voxyn.ai.WorldTimeProvider
+import com.voxyn.communication.ContactResolution
+import com.voxyn.communication.ContactResolver
 import com.voxyn.core.*
 import com.voxyn.execution.ExecutionController
 import com.voxyn.intent.IntentRouter
@@ -29,6 +31,20 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
+private data class ContactClarificationState(
+    val intent: IntentResult,
+    val candidates: List<Pair<String, String>>,
+    val askedFor: String
+)
+
+private data class MessageDraftState(
+    val recipient: String?,
+    val phone: String?,
+    val message: String?,
+    val channel: String,
+    val action: String
+)
+
 class VoxynEngine(
     private val scope          : CoroutineScope,
     private val context        : Context,
@@ -45,6 +61,7 @@ class VoxynEngine(
     private val localLlm         : LocalLlmProvider? = null,
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
+    private val contactResolver: ContactResolver,
     private val phaseTimeoutMs : Long = 10_000L
 ) {
     private val _events = MutableSharedFlow<PipelineEvent>(extraBufferCapacity = 64)
@@ -52,6 +69,9 @@ class VoxynEngine(
 
     private var activeJob    : Job? = null
     private var pendingInput : String? = null
+    private var pendingIntent : IntentResult? = null
+    private var pendingClarification : ContactClarificationState? = null
+    private var pendingDraft : MessageDraftState? = null
     private var pipelineGen  = 0L
 
     @Volatile
@@ -74,6 +94,10 @@ class VoxynEngine(
 
     fun interrupt(reason: String = "Interrupted") {
         activeJob?.cancel()
+        pendingInput = null
+        pendingIntent = null
+        pendingClarification = null
+        pendingDraft = null
         emit(PipelineEvent.EngineInterrupted(reason))
         tts.speak("Cancelled.")
         setOverlay("IDLE")
@@ -92,6 +116,22 @@ class VoxynEngine(
 
         val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) } ?: return
         setOverlay("PROCESSING")
+
+        // ─── Pending conversational flows (confirmation / clarification / draft) ─
+        if (pendingIntent != null) {
+            when {
+                isYesVariant(perceived) -> { runConfirmedIntent(); return }
+                isNoVariant(perceived) -> { cancelPendingConfirmation(); return }
+            }
+        }
+        if (pendingClarification != null) {
+            runContactClarification(perceived)
+            return
+        }
+        if (pendingDraft != null) {
+            runMessageDraft(perceived)
+            return
+        }
 
         // Hybrid routing: memory / current information / web / knowledge first.
         val route = requestRouter.route(perceived)
@@ -140,6 +180,34 @@ class VoxynEngine(
             return
         }
 
+        continuePipeline(intent, claudeSpeak, perceived)
+    }
+
+    /**
+     * Decision → execution tail of the pipeline. Shared by the normal path and
+     * by clarified/confirmed intents after contact resolution or a "yes".
+     */
+    private suspend fun continuePipeline(originalIntent: IntentResult, claudeSpeak: String?, perceived: String) {
+        var intent = originalIntent
+        // ─── Communication flows (resolution, drafts, group seam) ─────────
+        when {
+            intent.action == "MESSAGE_GROUP" -> { respondGroupUnsupported(intent); return }
+            intent.action == "CONTACT_LOOKUP" -> { handleContactLookup(intent); return }
+            intent.action == "SEND_UNSUPPORTED_CHANNEL" -> { respondUnsupportedChannel(intent); return }
+            intent.action in CONTACT_INTENTS -> {
+                val resolved = resolveContactsForIntent(intent) ?: return
+                if (resolved.action in SEND_INTENTS && !resolved.params.containsKey("message")) {
+                    startMessageDraft(resolved)
+                    return
+                }
+                if (resolved.action in SEND_INTENTS && resolved.params["recipient"].isNullOrBlank()) {
+                    startRecipientDraft(resolved)
+                    return
+                }
+                intent = resolved
+            }
+        }
+
         val confidence = phase(PipelinePhase.CONFIDENCE) { scoreConfidence(intent) } ?: return
         val risk       = phase(PipelinePhase.RISK)       { assessRisk(intent) }       ?: return
         val decision   = phase(PipelinePhase.DECISION)   { decide(intent, confidence, risk) } ?: return
@@ -148,15 +216,16 @@ class VoxynEngine(
 
         when (decision) {
             is DecisionState.AwaitingConfirmation -> {
-                pendingInput = raw
+                pendingInput = perceived
+                pendingIntent = intent
                 val promptText = "Confirm ${friendlyAction(intent.action)}?"
                 setOverlay("CONFIRMATION", promptText)
-                tts.speak("Just to confirm — should I ${friendlyAction(intent.action)}? Say yes.")
+                tts.speak("Just to confirm — should I ${confirmActionPhrase(intent)}? Say yes.")
                 emit(PipelineEvent.ConfirmationRequired(decision.intent))
                 return
             }
             is DecisionState.AwaitingClarification -> {
-                pendingInput = raw
+                pendingInput = perceived
                 val msg = decision.missing.firstOrNull() ?: "please clarify"
                 setOverlay("ERROR", msg)
                 tts.speak("I need more info: $msg.")
@@ -184,7 +253,11 @@ class VoxynEngine(
             return
         }
 
-        // Single Step Execution
+        executeIntent(intent, claudeSpeak)
+    }
+
+    /** Executes a single, already-decided intent through plan → verify → learn. */
+    private suspend fun executeIntent(intent: IntentResult, claudeSpeak: String?) {
         val actionText = friendlyAction(intent.action)
         setOverlay("SPEAKING", actionText)
 
@@ -203,11 +276,246 @@ class VoxynEngine(
 
         phase(PipelinePhase.LEARN) { learn(intent, outcome) }
         pendingInput = null
+        pendingIntent = null
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Pipeline complete", "ENGINE")
 
         delay(1500L)
         setOverlay("IDLE")
+    }
+
+    // ─── Confirmation (yes / no) ───────────────────────────────────────
+
+    private suspend fun runConfirmedIntent() {
+        val intent = pendingIntent ?: return
+        pendingIntent = null
+        pendingInput = null
+        VoxynLogger.i("Confirmed: ${intent.action} — executing", "ENGINE")
+        acknowledge()
+        executeIntent(intent, null)
+    }
+
+    private fun cancelPendingConfirmation() {
+        pendingIntent = null
+        pendingInput = null
+        val speech = "Okay, cancelled."
+        tts.speak(speech)
+        conversationSession.updateLastTurn("CANCELLED", speech)
+        setOverlay("IDLE")
+        emit(PipelineEvent.PipelineComplete)
+        VoxynLogger.i("✓ Confirmation cancelled", "ENGINE")
+    }
+
+    // ─── Contact resolution & message drafts ───────────────────────────
+
+    private suspend fun resolveContactsForIntent(intent: IntentResult): IntentResult? {
+        val name = (intent.params["recipient"] ?: intent.params["contact"] ?: "").trim()
+        if (name.isBlank()) return intent
+        return when (val resolution = contactResolver.resolve(name)) {
+            is ContactResolution.Unique -> {
+                val params = intent.params.toMutableMap()
+                params["contact"] = resolution.displayName
+                params["phone"] = resolution.phoneNumber
+                if (params.containsKey("recipient")) params["recipient"] = resolution.displayName
+                VoxynLogger.i(
+                    "COMMUNICATION: recipient=${resolution.displayName} phone=${resolution.phoneNumber} action=${intent.action} status=RESOLVED",
+                    "ENGINE"
+                )
+                intent.copy(params = params)
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(intent, resolution.candidates, name)
+                val prompt = "I found ${resolution.candidates.size} contacts named $name. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                setOverlay("CLARIFICATION", "Which contact?")
+                emit(PipelineEvent.ClarificationRequired(resolution.candidates.map { it.first }))
+                null
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I couldn't find a contact named $name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                setOverlay("ERROR", "Contact not found")
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $name")))
+                null
+            }
+        }
+    }
+
+    private suspend fun runContactClarification(perceived: String) {
+        val state = pendingClarification ?: return
+        val normalized = perceived.trim().lowercase()
+        val matched = state.candidates.firstOrNull {
+            it.first.lowercase() == normalized ||
+                it.first.lowercase().contains(normalized) ||
+                normalized.contains(it.first.lowercase())
+        }
+        if (matched != null) {
+            pendingClarification = null
+            continuePipeline(buildResolvedIntent(state.intent, matched.first, matched.second), null, perceived)
+            return
+        }
+        when (val res = contactResolver.resolve(perceived)) {
+            is ContactResolution.Unique -> {
+                pendingClarification = null
+                continuePipeline(buildResolvedIntent(state.intent, res.displayName, res.phoneNumber), null, perceived)
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(state.intent, res.candidates, perceived)
+                val prompt = "I found ${res.candidates.size} contacts named $perceived. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(state.intent.action, prompt)
+                setOverlay("CLARIFICATION", "Which contact?")
+                emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I still couldn't find a contact named $perceived. Say the full name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(state.intent.action, prompt)
+                setOverlay("ERROR", "Contact not found")
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $perceived")))
+            }
+        }
+    }
+
+    private fun buildResolvedIntent(intent: IntentResult, name: String, phone: String): IntentResult {
+        val params = intent.params.toMutableMap()
+        params["contact"] = name
+        params["phone"] = phone
+        if (params.containsKey("recipient")) params["recipient"] = name
+        return intent.copy(params = params)
+    }
+
+    private fun startMessageDraft(intent: IntentResult) {
+        val recipient = intent.params["recipient"] ?: intent.params["contact"] ?: ""
+        pendingDraft = MessageDraftState(
+            recipient = recipient.takeIf { it.isNotBlank() },
+            phone = intent.params["phone"],
+            message = null,
+            channel = intent.params["channel"] ?: "sms",
+            action = intent.action
+        )
+        val prompt = "What should I say to $recipient?"
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        setOverlay("LISTENING", "Awaiting message")
+        emit(PipelineEvent.ClarificationRequired(listOf("Message body")))
+    }
+
+    private fun startRecipientDraft(intent: IntentResult) {
+        pendingDraft = MessageDraftState(
+            recipient = null,
+            phone = null,
+            message = intent.params["message"],
+            channel = intent.params["channel"] ?: "sms",
+            action = intent.action
+        )
+        val prompt = "Who should I send it to?"
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        setOverlay("LISTENING", "Awaiting contact")
+        emit(PipelineEvent.ClarificationRequired(listOf("Recipient")))
+    }
+
+    private suspend fun runMessageDraft(perceived: String) {
+        val draft = pendingDraft ?: return
+        if (draft.recipient == null) {
+            when (val res = contactResolver.resolve(perceived)) {
+                is ContactResolution.Unique -> {
+                    pendingDraft = null
+                    continuePipeline(buildDraftIntent(draft.copy(recipient = res.displayName, phone = res.phoneNumber)), null, perceived)
+                }
+                is ContactResolution.Ambiguous -> {
+                    pendingClarification = ContactClarificationState(buildDraftIntent(draft), res.candidates, perceived)
+                    pendingDraft = null
+                    val prompt = "I found ${res.candidates.size} contacts named $perceived. Which one?"
+                    tts.speak(prompt)
+                    conversationSession.updateLastTurn("SEND_MESSAGE", prompt)
+                    setOverlay("CLARIFICATION", "Which contact?")
+                    emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+                }
+                ContactResolution.NotFound -> {
+                    val prompt = "I couldn't find a contact named $perceived. Try again."
+                    tts.speak(prompt)
+                    conversationSession.updateLastTurn("SEND_MESSAGE", prompt)
+                    setOverlay("ERROR", "Contact not found")
+                    emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $perceived")))
+                }
+            }
+            return
+        }
+        pendingDraft = null
+        continuePipeline(buildDraftIntent(draft.copy(message = perceived)), null, perceived)
+    }
+
+    private fun buildDraftIntent(draft: MessageDraftState): IntentResult {
+        val params = mutableMapOf<String, String>()
+        params["channel"] = draft.channel
+        draft.recipient?.let {
+            params["recipient"] = it
+            params["contact"] = it
+        }
+        draft.phone?.let { params["phone"] = it }
+        draft.message?.let { params["message"] = it }
+        return IntentResult(
+            action = draft.action,
+            params = params,
+            confidence = 0.95f,
+            rawInput = ""
+        )
+    }
+
+    // ─── Communication responses ───────────────────────────────────────
+
+    private fun respondGroupUnsupported(intent: IntentResult) {
+        val group = intent.params["group"] ?: ""
+        val prompt = "I can't send to groups yet. Group messaging support is coming."
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        VoxynLogger.w("COMMUNICATION: group=$group action=MESSAGE_GROUP status=UNSUPPORTED", "ENGINE")
+        setOverlay("ERROR", "Groups not supported")
+        emit(PipelineEvent.PipelineComplete)
+    }
+
+    private fun respondUnsupportedChannel(intent: IntentResult) {
+        val channel = intent.params["channel"] ?: ""
+        val prompt = "I can only send messages through SMS or WhatsApp."
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        VoxynLogger.w("COMMUNICATION: channel=$channel action=SEND_MESSAGE status=UNSUPPORTED_CHANNEL", "ENGINE")
+        setOverlay("ERROR", "Unsupported app")
+        emit(PipelineEvent.PipelineComplete)
+    }
+
+    private suspend fun handleContactLookup(intent: IntentResult) {
+        val name = intent.params["contact"] ?: ""
+        when (val res = contactResolver.resolve(name)) {
+            is ContactResolution.Unique -> {
+                val prompt = "${res.displayName.replaceFirstChar { it.uppercase() }}'s number is ${res.phoneNumber}."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                VoxynLogger.i(
+                    "COMMUNICATION: recipient=${res.displayName} phone=${res.phoneNumber} action=CONTACT_LOOKUP status=SUCCESS",
+                    "ENGINE"
+                )
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(intent, res.candidates, name)
+                val prompt = "I found ${res.candidates.size} contacts named $name. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I couldn't find a contact named $name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $name")))
+            }
+        }
+        setOverlay("IDLE")
+        emit(PipelineEvent.PipelineComplete)
     }
 
     // ─── Smart Chain Execution ────────────────────────────────────────
@@ -555,6 +863,10 @@ class VoxynEngine(
         "READ_NOTIFICATIONS"   -> "read notifications"
         "REMEMBER_THIS"        -> "remember this screen"
         "CALL_CONTACT"         -> "make call"
+        "SEND_MESSAGE"         -> "send a message"
+        "SEND_WHATSAPP_MESSAGE" -> "send a WhatsApp message"
+        "MESSAGE_GROUP"        -> "message a group"
+        "CONTACT_LOOKUP"       -> "look up a contact"
         else                   -> action.replace("_", " ").lowercase()
     }
 
@@ -587,6 +899,10 @@ class VoxynEngine(
             "BRIGHTNESS_DOWN"      -> "Dimmed."
             "LOCK_PHONE"           -> "Locking."
             "MODE_ACTIVATE"        -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} mode activated."
+            "SEND_MESSAGE"         -> "Opened message to ${params["recipient"] ?: "contact"}."
+            "SEND_WHATSAPP_MESSAGE" -> "Opened WhatsApp to ${params["recipient"] ?: "contact"}."
+            "MESSAGE_GROUP"        -> "Done."
+            "CONTACT_LOOKUP"       -> "Here's the contact."
             "SEND_CURRENT_MESSAGE" -> "Message sent."
             "LIKE_CURRENT"         -> "Liked."
             "SCROLL_DOWN"          -> "Scrolled down."
@@ -599,6 +915,22 @@ class VoxynEngine(
         }
     }
 
+    private fun confirmActionPhrase(intent: IntentResult): String {
+        val recipient = intent.params["recipient"] ?: intent.params["contact"]
+        return when (intent.action) {
+            "CALL_CONTACT" -> "call ${recipient ?: "that contact"}"
+            "SEND_MESSAGE" -> "message ${recipient ?: "them"}"
+            "SEND_WHATSAPP_MESSAGE" -> "message ${recipient ?: "them"} on WhatsApp"
+            else -> friendlyAction(intent.action)
+        }
+    }
+
+    private fun isYesVariant(input: String): Boolean =
+        input.trim().trimEnd('.', '!', '?').lowercase() in YES_VARIANTS
+
+    private fun isNoVariant(input: String): Boolean =
+        input.trim().trimEnd('.', '!', '?').lowercase() in NO_VARIANTS
+
     private fun acknowledge() {
         tts.speak(ACKNOWLEDGEMENTS.random())
     }
@@ -610,7 +942,21 @@ class VoxynEngine(
     }
 
     companion object {
-        private val HIGH_RISK = setOf("SEND_MESSAGE", "CALL_CONTACT", "DELETE_FILE", "FACTORY_RESET")
+        private val HIGH_RISK = setOf(
+            "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE", "CALL_CONTACT",
+            "DELETE_FILE", "FACTORY_RESET"
+        )
+        private val CONTACT_INTENTS = setOf("CALL_CONTACT", "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE")
+        private val SEND_INTENTS = setOf("SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE")
+        private val YES_VARIANTS = setOf(
+            "yes", "yeah", "yep", "yup", "sure", "okay", "ok", "okie",
+            "go ahead", "do it", "go ahead and do it"
+        )
+        private val NO_VARIANTS = setOf(
+            "no", "nope", "nah", "cancel", "stop",
+            "never mind", "nevermind", "don't", "dont",
+            "don't do it", "dont do it"
+        )
         private val ACKNOWLEDGEMENTS = listOf(
             "On it.", "Give me a sec.", "Right away.", "Let me handle that.", "Sure thing."
         )

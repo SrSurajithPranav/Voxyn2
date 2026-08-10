@@ -11,6 +11,9 @@ import android.net.Uri
 import android.os.Build
 import android.provider.AlarmClock
 import android.provider.Settings
+import com.voxyn.communication.ContactResolution
+import com.voxyn.communication.ContactResolver
+import com.voxyn.communication.MessageComposer
 import com.voxyn.core.ActionStep
 import com.voxyn.core.PhaseResult
 import com.voxyn.mode.ModeEngine
@@ -20,7 +23,9 @@ import com.voxyn.utils.VoxynLogger
 class ExecutionController(
     private val context: Context,
     private val modeEngine: ModeEngine,
-    private val appLaunchResolver: AppLaunchResolver
+    private val appLaunchResolver: AppLaunchResolver,
+    private val contactResolver: ContactResolver,
+    private val composer: MessageComposer
 ) {
 
     private val audioManager by lazy {
@@ -71,7 +76,11 @@ class ExecutionController(
                 "SET_ALARM"        -> setAlarm(step.params)
                 "SET_TIMER"        -> setTimer(step.params)
                 "NAVIGATE"         -> navigate(step.params["destination"] ?: step.params["destinations"] ?: "")
-                "CALL_CONTACT"     -> callContact(step.params["contact"] ?: "")
+                "CALL_CONTACT"     -> callContact(step.params)
+                "SEND_MESSAGE"     -> sendMessage(step.params)
+                "SEND_WHATSAPP_MESSAGE" -> sendWhatsApp(step.params)
+                "MESSAGE_GROUP"    -> composer.composeGroup(step.params["group"] ?: "", step.params["message"] ?: "")
+                "CONTACT_LOOKUP"   -> contactLookup(step.params)
                 "LOCK_PHONE"       -> lockPhone()
                 "MODE_ACTIVATE"    -> activateMode(step.params["mode_name"] ?: "normal")
                 else               -> PhaseResult.Failure("Unknown action: ${step.actionType}", canFallback = true)
@@ -472,20 +481,78 @@ class ExecutionController(
         }
     }
 
-    private fun callContact(contact: String): PhaseResult<String> {
+    private fun callContact(params: Map<String, String>): PhaseResult<String> {
+        val contact = params["contact"] ?: ""
+        val phone = params["phone"] ?: contact
+        if (phone.isBlank()) {
+            return PhaseResult.Failure("I don't know who to call.", canFallback = false)
+        }
         return try {
-            val uri = Uri.parse("tel:$contact")
+            val uri = Uri.parse("tel:$phone")
             val intent = Intent(Intent.ACTION_CALL, uri).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
+            VoxynLogger.i("COMMUNICATION: recipient=$contact phone=$phone action=CALL_CONTACT status=SUCCESS", "EXEC")
             PhaseResult.Success("Calling $contact")
-        } catch (e: Exception) {
-            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:")).apply {
+        } catch (e: SecurityException) {
+            VoxynLogger.e("CALL_PHONE permission missing — falling back to dialer", e, "EXEC")
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
-            PhaseResult.Failure("Opened dialer", canFallback = false)
+            PhaseResult.Success("Opened dialer for $contact")
+        } catch (e: Exception) {
+            VoxynLogger.e("Call failed — falling back to dialer", e, "EXEC")
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            PhaseResult.Success("Opened dialer for $contact")
+        }
+    }
+
+    private fun sendMessage(params: Map<String, String>): PhaseResult<String> {
+        val contact = params["recipient"] ?: params["contact"] ?: ""
+        val phone = params["phone"] ?: contact
+        val channel = params["channel"] ?: "sms"
+        var message = params["message"] ?: ""
+        if (message == "<screen>") {
+            message = VoxynAccessibilityService.instance?.currentScreenText()?.takeIf { it.isNotBlank() } ?: ""
+        }
+        if (message.isBlank()) {
+            return PhaseResult.Failure("What should I say?", canFallback = false)
+        }
+        return if (channel == "whatsapp") composer.composeWhatsApp(phone, message)
+        else composer.composeSms(phone, message)
+    }
+
+    private fun sendWhatsApp(params: Map<String, String>): PhaseResult<String> {
+        val contact = params["recipient"] ?: params["contact"] ?: ""
+        val phone = params["phone"] ?: contact
+        var message = params["message"] ?: ""
+        if (message == "<screen>") {
+            message = VoxynAccessibilityService.instance?.currentScreenText()?.takeIf { it.isNotBlank() } ?: ""
+        }
+        if (message.isBlank()) {
+            return PhaseResult.Failure("What should I say?", canFallback = false)
+        }
+        if (!composer.isWhatsAppInstalled()) {
+            VoxynLogger.w("COMMUNICATION: channel=WhatsApp action=SEND_WHATSAPP_MESSAGE status=UNAVAILABLE", "EXEC")
+            return PhaseResult.Failure("WhatsApp is not installed.", canFallback = false)
+        }
+        return composer.composeWhatsApp(phone, message)
+    }
+
+    private fun contactLookup(params: Map<String, String>): PhaseResult<String> {
+        val name = params["contact"] ?: ""
+        return when (val res = contactResolver.resolve(name)) {
+            is ContactResolution.Unique ->
+                PhaseResult.Success("${res.displayName}'s number is ${res.phoneNumber}")
+            is ContactResolution.Ambiguous ->
+                PhaseResult.Failure("I found ${res.candidates.size} contacts named $name. Which one?", canFallback = false)
+            ContactResolution.NotFound ->
+                PhaseResult.Failure("I couldn't find a contact named $name.", canFallback = false)
         }
     }
 }

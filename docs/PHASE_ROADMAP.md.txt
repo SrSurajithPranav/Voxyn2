@@ -641,6 +641,14 @@ Documentation remains current.
 
 # Current Focus
 
+Recently completed:
+
+✓ Communication & Messaging (contacts, SMS/WhatsApp compose, confirmation flow) — see CURRENT_STATE.md and DECISIONS.md (ADR-011)
+
+Remaining communication work:
+
+- WhatsApp group messaging (needs a reliable public mechanism; currently an explicit unsupported seam)
+
 The current engineering priority is:
 
 1. Capability Architecture

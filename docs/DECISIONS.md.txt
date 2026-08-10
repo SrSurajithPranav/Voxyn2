@@ -550,3 +550,47 @@ It should exist permanently in documentation.
 ---
 
 End of Document
+
+
+---
+
+# ADR-011
+
+## Title
+
+Communication delivery uses compose intents, never auto-send
+
+## Status
+
+Accepted
+
+## Context
+
+VOXYN must support "Message Rahul saying I'll be late", "Send WhatsApp to Rahul I'm coming", "Call Mom" and related commands. Sending a message is an external side effect; WhatsApp exposes no public API for automatically sending messages to arbitrary personal accounts, and auto-sending SMS requires SEND_SMS special-app access that OEMs (OnePlus/ColorOS) restrict. The user chose compose-style delivery.
+
+## Alternatives Considered
+
+1. Auto-send SMS via SEND_SMS permission — rejected: unreliable on the target device, no benefit for WhatsApp.
+2. Coordinate-based UI automation — rejected: brittle and explicitly forbidden by milestone rules.
+3. Accessibility-driven send — rejected: only works when the target app is already open and focused.
+
+## Decision
+
+Messages are delivered with compose intents:
+
+- SMS: `ACTION_SENDTO sms:<phone>` + `sms_body` (opens the SMS app prefilled; user taps Send).
+- WhatsApp: `ACTION_VIEW https://wa.me/<digits>?text=<encoded>` when the number has a country code, falling back to `Intent.ACTION_SEND` (`text/plain`, package `com.whatsapp`).
+- Calls: `ACTION_CALL` with the resolved contact's number, falling back to `ACTION_DIAL` when CALL_PHONE is not granted.
+- Group messaging: `MESSAGE_GROUP` is routed and parsed but responds "I can't send to groups yet" — a deliberate seam for future work; no fake group support.
+
+All risky actions (CALL_CONTACT, SEND_MESSAGE, SEND_WHATSAPP_MESSAGE) go through the existing confirmation flow; a follow-up "yes" resumes the pending intent, "no" cancels. Ambiguous contacts are never auto-chosen — VOXYN asks "I found two Rahuls. Which one?".
+
+## Consequences
+
+- TTS is honest about the outcome ("Opened WhatsApp to Rahul.") rather than claiming auto-send.
+- No SEND_SMS permission is added to the manifest.
+- Contacts are resolved from Android Contacts plus a small static alias map (mom/dad/etc.); custom aliases via memory are future work.
+
+## Review Date
+
+2026-08-10

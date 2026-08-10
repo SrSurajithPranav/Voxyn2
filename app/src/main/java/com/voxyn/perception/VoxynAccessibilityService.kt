@@ -115,6 +115,13 @@ class VoxynAccessibilityService : AccessibilityService() {
         return false
     }
 
+    /** Returns the visible screen text (first 200 chars) or null when unavailable. */
+    fun currentScreenText(): String? {
+        val root = rootInActiveWindow ?: return null
+        val text = extractAllText(root).joinToString("\n").trim()
+        return text.takeIf { it.isNotEmpty() }?.take(200)
+    }
+
     fun performRememberThis(): String {
         VoxynLogger.i("A11Y: Performing REMEMBER_THIS (scraping screen text)", "A11Y")
         val root = rootInActiveWindow
