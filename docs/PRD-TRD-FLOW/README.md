@@ -11,6 +11,9 @@ This folder contains the product, technical, and flow documentation for VOXYN:
 | `PRD.md` | Product Requirements Document — vision, users, features, requirements, acceptance criteria |
 | `TRD.md` | Technical Requirements Document — architecture, modules, protocols, data flow, testing |
 | `APP_FLOW.md` | App flow — screens, states, conversation loop, service lifecycle, error flows, test paths |
+| `UI_UX_BRIEF.md` | UI/UX design brief — visual identity, screens, voice personality, accessibility, metrics |
+| `BACKEND_SCHEMA.md` | Backend & data schema — storage map, DataStore keys, file schemas, future sync |
+| `IMPLEMENTATION_PLAN.md` | Implementation plan — status, P0/P1/P2 backlog, roadmap mapping, release checklist |
 
 Related docs in `docs/`:
 

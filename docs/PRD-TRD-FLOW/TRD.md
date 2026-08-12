@@ -42,7 +42,8 @@ Version: 1.0.19 (versionCode 20) / Status: Living / Owner: VOXYN Core
 - **Koin** DI (no Hilt), no Firebase, no `println` (VoxynLogger only).
 - Vosk (wake word), sherpa-onnx + NVIDIA Parakeet-TDT 0.6B v3 INT8 (command STT),
   MediaPipe GenAI `LlmInference` (local LLM), Android TTS.
-- Room/DataStore are NOT used; memory is a JSON/DB-backed `MemoryRepository`.
+- Preferences DataStore (`voxyn_memory`) backs `MemoryRepository` (trust scores
+  + JSON notes); `ConversationSession` is in-memory.
 
 ## 3. Module map (app/src/main/java/com/voxyn)
 
