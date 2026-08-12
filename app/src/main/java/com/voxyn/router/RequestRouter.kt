@@ -11,7 +11,7 @@ import com.voxyn.utils.VoxynLogger
  */
 enum class RouteType {
     FAST_COMMAND, CURRENT_INFORMATION, MEMORY_SAVE, MEMORY_RECALL,
-    WEB_REQUIRED, CONVERSATIONAL, UNKNOWN
+    WEB_REQUIRED, WEATHER, DISTANCE, CONVERSATIONAL, UNKNOWN
 }
 
 data class RouteDecision(
@@ -50,14 +50,55 @@ class RequestRouter {
             return RouteDecision(RouteType.CURRENT_INFORMATION, mapOf("city" to city), 0.92f)
         }
 
+        // ── Weather: "what's the weather in Chennai?" ──────────────────────
+        val weather = Regex("^what('s| is)? the weather(?: like)? in (.+)$").find(t)
+            ?: Regex("^weather(?: like)? in (.+)$").find(t)
+            ?: Regex("^(?:how (hot|cold|warm) is it) in (.+)$").find(t)
+        if (weather != null) {
+            val location = weather.groupValues.last().trim().trimEnd('?', '.', '!')
+            return RouteDecision(RouteType.WEATHER, mapOf("location" to location), 0.92f)
+        }
+
+        // ── Distance: "distance between Chennai and Bangalore" ─────────────
+        val distance = Regex("^distance between (.+) and (.+)$").find(t)
+            ?: Regex("^how far is (.+) from (.+)$").find(t)
+            ?: Regex("^how far is it from (.+) to (.+)$").find(t)
+        if (distance != null) {
+            return RouteDecision(
+                RouteType.DISTANCE,
+                mapOf(
+                    "origin" to distance.groupValues[1].trim().trimEnd('?', '.', '!'),
+                    "destination" to distance.groupValues[2].trim().trimEnd('?', '.', '!')
+                ),
+                0.9f
+            )
+        }
+        if (t.startsWith("which is closer") || t.startsWith("which one is closer")) {
+            return RouteDecision(RouteType.DISTANCE, mapOf("query" to perceived.trim()), 0.85f)
+        }
+
         // ── Web required: "what's the latest news about OpenAI?" ──────────
-        if (Regex("latest news|news about|breaking news|headlines|current events|what happened today|what's happening|what is happening").containsMatchIn(t)) {
+        val newsIntent = Regex(
+            "latest news|breaking news|headlines|current events|top stories|world news|tech news|" +
+                "business news|news today|news about|news in|what's happening|what is happening|" +
+                "what happened today|what's today's news|today's news"
+        ).containsMatchIn(t) ||
+            (t.contains("news") && Regex("^\\s*(what|whats|what's|give me|tell me|any|read|show)\\b").containsMatchIn(t)) ||
+            (t.contains("what happened") && (t.contains("today") || t.contains("world")))
+        if (newsIntent) {
             val query = when {
                 t.contains("news about") -> t.substringAfter("news about").removePrefix("the ")
                 t.contains("latest news") -> t.substringAfter("latest news")
                 else -> ""
             }.trim().trimEnd('?', '.', '!').removePrefix("about ").removePrefix("on ")
             VoxynLogger.i("[ROUTER] news query=\"$query\"", "ROUTER")
+            return RouteDecision(RouteType.WEB_REQUIRED, mapOf("query" to query), 0.9f)
+        }
+
+        // ── Explicit web search: "search the internet for X" ───────────────
+        val webSearch = Regex("^search (?:the )?(?:web|internet|google)(?: for)? (.+)$").find(t)
+        if (webSearch != null) {
+            val query = webSearch.groupValues[1].trim().trimEnd('?', '.', '!')
             return RouteDecision(RouteType.WEB_REQUIRED, mapOf("query" to query), 0.9f)
         }
 

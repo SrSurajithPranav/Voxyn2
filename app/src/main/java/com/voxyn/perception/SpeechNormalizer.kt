@@ -1,6 +1,5 @@
 package com.voxyn.perception
 
-import com.voxyn.apps.AppCatalog
 import com.voxyn.utils.VoxynLogger
 
 /**
@@ -14,7 +13,7 @@ import com.voxyn.utils.VoxynLogger
  * Pipeline: raw STT → text normalization → app/entity correction → user-specific
  * variants → canonical request.
  */
-class SpeechNormalizer(private val appCatalog: AppCatalog) {
+class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
 
     fun normalize(raw: String): String {
         val original = raw.trim().lowercase()
@@ -36,10 +35,13 @@ class SpeechNormalizer(private val appCatalog: AppCatalog) {
         t = t.replace(Regex("\\byour job\\b"), "youtube")
         t = t.replace(Regex("\\byou tube\\b"), "youtube")
         t = t.replace(Regex("\\bu tube\\b"), "youtube")
+        t = t.replace(Regex("\\byou toob\\b"), "youtube")
+        t = t.replace(Regex("\\byeetube\\b"), "youtube")
         t = t.replace(Regex("\\bwhats up\\b"), "whatsapp")
         t = t.replace(Regex("\\bwassup\\b"), "whatsapp")
-        t = t.replace(Regex("\\btime timesheet\\b"), "timesheet")
-        t = t.replace(Regex("\\btime sheet\\b"), "timesheet")
+        t = t.replace(Regex("\\bwhats app\\b"), "whatsapp")
+        t = t.replace(Regex("\\bwatts app\\b"), "whatsapp")
+        t = t.replace(Regex("\\bchat gpt\\b"), "chatgpt")
 
         // "open the/a X" and trailing politeness
         t = t.replace(Regex("^open\\s+(?:the|a|an)\\s+"), "open ")
@@ -58,7 +60,7 @@ class SpeechNormalizer(private val appCatalog: AppCatalog) {
         val altOpen = Regex("^(when|and|in|wanna|want to)\\s+(.+)$").find(t)
         if (altOpen != null) {
             val spoken = altOpen.groupValues[2].trim()
-            val label = appCatalog.resolveLabel(spoken)
+            val label = appNameResolver.resolveLabel(spoken)
             if (label != null) {
                 t = "open $label"
             }
@@ -68,7 +70,7 @@ class SpeechNormalizer(private val appCatalog: AppCatalog) {
         val open = Regex("^(open|launch|start|go to)\\s+(.+)$").find(t)
         if (open != null) {
             val spoken = open.groupValues[2].trim()
-            val label = appCatalog.resolveLabel(spoken)
+            val label = appNameResolver.resolveLabel(spoken)
             if (label != null) {
                 val prefix = open.groupValues[1].trim()
                 t = if (prefix == "go to") "go to $label" else "$prefix $label"
@@ -77,7 +79,7 @@ class SpeechNormalizer(private val appCatalog: AppCatalog) {
 
         // A bare app name ("whatsapp") means "open whatsapp".
         if (!t.contains(" ")) {
-            val label = appCatalog.resolveLabel(t)
+            val label = appNameResolver.resolveLabel(t)
             if (label != null) {
                 t = "open $label"
             }

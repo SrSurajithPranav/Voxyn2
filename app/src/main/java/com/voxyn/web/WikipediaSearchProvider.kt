@@ -1,4 +1,4 @@
-package com.voxyn.ai
+package com.voxyn.web
 
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.Dispatchers
@@ -9,19 +9,18 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * KnowledgeProvider — keyless cloud knowledge and current information:
- *  - Wikipedia REST summaries for "explain X", "what is X", "capital of X"
- *  - Google News RSS for "latest news about X"
- *
- * No API keys required. Returns null on any failure so the engine can fall
- * back gracefully instead of fabricating an answer.
+ * WikipediaSearchProvider — keyless Wikipedia REST summaries for
+ * "explain X", "what is X", "capital of X", etc. Returns a condensed,
+ * TTS-friendly extract or null so callers fall through gracefully.
  */
-class KnowledgeProvider {
+open class WikipediaSearchProvider : WebSearchProvider {
+
+    override val id: String = "wikipedia"
 
     @Volatile private var lastTopic: String? = null
 
-    suspend fun knowledge(question: String): AiResponse? {
-        val topic = resolveTopic(question) ?: return null
+    open override suspend fun search(query: String): WebSearchResult? {
+        val topic = resolveTopic(query) ?: return null
         return withContext(Dispatchers.IO) {
             runCatching {
                 val encoded = URLEncoder.encode(topic, "UTF-8")
@@ -42,38 +41,11 @@ class KnowledgeProvider {
                     return@withContext null
                 }
                 lastTopic = topic
-                val answer = condense(extract, question, topic)
+                val answer = condense(extract, query)
                 VoxynLogger.i("[AI] Wikipedia: \"$topic\" → ${answer.length} chars", "AI")
-                AiResponse(answer, "Wikipedia")
+                WebSearchResult(answer, "Wikipedia")
             }.getOrNull()
         }
-    }
-
-    suspend fun news(query: String): AiResponse? = withContext(Dispatchers.IO) {
-        runCatching {
-            val q = query.ifBlank { "top stories" }
-            val encoded = URLEncoder.encode(q, "UTF-8")
-            val url = "https://news.google.com/rss/search?q=$encoded&hl=en-IN&gl=IN&ceid=IN:en"
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 12000
-                setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant)")
-            }
-            if (conn.responseCode != 200) {
-                VoxynLogger.w("Google News HTTP ${conn.responseCode}", "WEB")
-                return@withContext null
-            }
-            val xml = conn.inputStream.bufferedReader().readText()
-            val titles = parseNewsTitles(xml).map { cleanNewsTitle(it) }.filter { it.isNotBlank() }.distinct()
-            if (titles.isEmpty()) {
-                VoxynLogger.w("Google News no results for '$q'", "WEB")
-                return@withContext null
-            }
-            VoxynLogger.i("[WEB] News results: ${titles.size} for '$q'", "WEB")
-            val body = titles.take(3).joinToString(". ") { it.trimEnd('.') }
-            AiResponse("Here's the latest on $q: $body.", "Google News")
-        }.getOrNull()
     }
 
     /** Picks a Wikipedia title from a spoken question, honouring follow-ups. */
@@ -100,7 +72,7 @@ class KnowledgeProvider {
     }
 
     /** Keeps TTS-friendly length; surfaces the sentence matching the question. */
-    private fun condense(extract: String, question: String, topic: String): String {
+    private fun condense(extract: String, question: String): String {
         val sentences = extract.split(Regex("(?<=[.!?])\\s+")).map { it.trim() }.filter { it.isNotEmpty() }
 
         val keyword = when {
@@ -116,26 +88,6 @@ class KnowledgeProvider {
         }
         return chosen.joinToString(" ")
     }
-
-    private fun parseNewsTitles(xml: String): List<String> =
-        Regex("<item>.*?</item>", RegexOption.DOT_MATCHES_ALL)
-            .findAll(xml)
-            .mapNotNull { m ->
-                Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
-                    .find(m.value)?.groupValues?.get(1)?.let { unescape(it) }
-            }
-            .toList()
-
-    private fun unescape(value: String): String = value
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&#39;", "'")
-        .replace("&quot;", "\"")
-
-    /** Drops the trailing " - Publisher" suffix Google News appends. */
-    private fun cleanNewsTitle(title: String): String =
-        title.replace(Regex("\\s+-\\s+[^-]+$"), "").trim()
 
     companion object {
         private val TOPIC_PREFIXES = listOf(

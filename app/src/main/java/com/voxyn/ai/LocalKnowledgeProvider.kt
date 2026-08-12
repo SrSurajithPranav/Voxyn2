@@ -10,6 +10,9 @@ class LocalKnowledgeProvider {
 
     fun joke(): String = JOKES.random()
 
+    /** Used when no local/web/cloud provider could answer a general question. */
+    fun cantFind(): String = "I couldn't find an answer to that. Try asking it a different way."
+
     fun offlineNotice(): String = OFFLINE_NOTICE
 
     companion object {

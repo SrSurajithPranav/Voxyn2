@@ -3,6 +3,7 @@ package com.voxyn.apps
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import com.voxyn.perception.AppNameResolver
 import com.voxyn.utils.VoxynLogger
 
 data class AppEntry(
@@ -19,7 +20,7 @@ data class AppEntry(
  * actually installed on the phone. Matching is deliberately forgiving:
  * exact -> alias -> prefix/contains/token overlap -> fuzzy edit distance.
  */
-class AppCatalog(private val context: Context) {
+class AppCatalog(private val context: Context) : AppNameResolver {
 
     companion object {
         private val COMMON_ALIASES = mapOf(
@@ -208,7 +209,7 @@ class AppCatalog(private val context: Context) {
             .map { (e, _) -> e.label }
     }
 
-    fun resolveLabel(spoken: String): String? = findBest(spoken)?.label
+    override fun resolveLabel(spoken: String): String? = findBest(spoken)?.label
 
     fun canonical(spoken: String): String {
         val cleaned = stripFillers(spoken)

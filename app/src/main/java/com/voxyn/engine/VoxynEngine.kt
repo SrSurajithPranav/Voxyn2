@@ -4,9 +4,8 @@ import android.content.Context
 import android.content.Intent
 import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.ai.ClaudeResult
-import com.voxyn.ai.KnowledgeProvider
+import com.voxyn.ai.GeneralQueryResolver
 import com.voxyn.ai.LocalKnowledgeProvider
-import com.voxyn.ai.LocalLlmProvider
 import com.voxyn.ai.WorldTimeProvider
 import com.voxyn.communication.ContactResolution
 import com.voxyn.communication.ContactResolver
@@ -56,9 +55,8 @@ class VoxynEngine(
     private val speechNormalizer : SpeechNormalizer,
     private val requestRouter    : RequestRouter,
     private val worldTimeProvider: WorldTimeProvider,
-    private val knowledgeProvider: KnowledgeProvider,
+    private val generalQuery     : GeneralQueryResolver,
     private val localKnowledge   : LocalKnowledgeProvider,
-    private val localLlm         : LocalLlmProvider? = null,
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
     private val contactResolver: ContactResolver,
@@ -139,10 +137,13 @@ class VoxynEngine(
         when (route.type) {
             RouteType.MEMORY_SAVE -> { handleMemorySave(route); return }
             RouteType.MEMORY_RECALL -> { handleMemoryRecall(route); return }
-            RouteType.WEB_REQUIRED -> { handleNews(route); return }
-            RouteType.CONVERSATIONAL -> { handleKnowledge(route, perceived); return }
+            RouteType.WEB_REQUIRED -> { handleGeneralQuery(route, perceived); return }
+            RouteType.CONVERSATIONAL -> { handleGeneralQuery(route, perceived); return }
+            RouteType.WEATHER -> { handleGeneralQuery(route, perceived); return }
+            RouteType.DISTANCE -> { handleGeneralQuery(route, perceived); return }
             RouteType.CURRENT_INFORMATION -> {
                 if (route.params.containsKey("city")) { handleWorldTime(route); return }
+                handleGeneralQuery(route, perceived); return
             }
             else -> Unit
         }
@@ -150,27 +151,39 @@ class VoxynEngine(
         var intent = phase(PipelinePhase.INTENT) { resolveIntent(perceived) } ?: return
         var claudeSpeak: String? = null
 
-        // Claude fallback for UNKNOWN intent
-        if (intent.action == "UNKNOWN" && claudeResolver != null) {
-            VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
-            setOverlay("PROCESSING", "Thinking...")
-            acknowledge()
-            val result: ClaudeResult? = try {
-                val contextPrompt = conversationSession.getContext().ifEmpty { "No prior conversation." }
-                withTimeout(12_000L) { claudeResolver.resolve("$perceived\n\nConversation context:\n$contextPrompt") }
-            } catch (e: Exception) {
-                VoxynLogger.e("Claude error: ${e.message}", tag = "ENGINE"); null
-            }
-            if (result != null && result.intent.action != "UNKNOWN") {
-                intent = result.intent
-                claudeSpeak = result.speakOverride
-                VoxynLogger.i("Claude resolved intent: ${intent.action}", "ENGINE")
-            }
-        }
-
         if (handleConversational(intent, perceived)) return
 
         if (intent.action == "UNKNOWN") {
+            // Hybrid general intelligence: local LLM → web → cloud, then the
+            // optional cloud intent parser, then a graceful unknown response.
+            val general = runCatching {
+                withTimeout(60_000L) { generalQuery.resolve(perceived, conversationSession.getContext()) }
+            }.getOrNull()
+            if (general != null) {
+                completeConversational("GENERAL", general.text, general.params)
+                return
+            }
+
+            if (claudeResolver != null) {
+                VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
+                setOverlay("PROCESSING", "Thinking...")
+                acknowledge()
+                val result: ClaudeResult? = try {
+                    val contextPrompt = conversationSession.getContext().ifEmpty { "No prior conversation." }
+                    withTimeout(12_000L) { claudeResolver.resolve("$perceived\n\nConversation context:\n$contextPrompt") }
+                } catch (e: Exception) {
+                    VoxynLogger.e("Claude error: ${e.message}", tag = "ENGINE"); null
+                }
+                if (result != null && result.intent.action != "UNKNOWN") {
+                    intent = result.intent
+                    claudeSpeak = result.speakOverride
+                    VoxynLogger.i("Claude resolved intent: ${intent.action}", "ENGINE")
+                    if (handleConversational(intent, perceived)) return
+                    continuePipeline(intent, claudeSpeak, perceived)
+                    return
+                }
+            }
+
             val phrase = unknownResponse()
             conversationSession.updateLastTurn("UNKNOWN", phrase)
             emit(PipelineEvent.ClarificationRequired(listOf("Unknown command")))
@@ -691,52 +704,36 @@ class VoxynEngine(
 
     private suspend fun handleWorldTime(route: RouteDecision) {
         val city = route.params["city"] ?: return
-        val speech = worldTimeProvider.timeIn(city) ?: "I don't know the time zone for $city."
-        completeConversational("WORLD_TIME", speech)
-    }
-
-    private suspend fun handleNews(route: RouteDecision) {
-        val query = route.params["query"] ?: ""
-        setOverlay("PROCESSING", "Fetching news...")
-        VoxynLogger.i("[WEB] Fetching news: \"${query.ifBlank { "top stories" }}\"", "WEB")
-        val result = knowledgeProvider.news(query)
-        if (result != null) {
-            completeConversational("NEWS", result.text)
+        val speech = worldTimeProvider.timeIn(city)
+        if (speech != null) {
+            completeConversational("WORLD_TIME", speech, mapOf("kind" to "time", "location" to city))
         } else {
-            completeConversational("NEWS", localKnowledge.offlineNotice())
+            completeConversational("WORLD_TIME", "I don't know the time zone for $city.")
         }
     }
 
-    private suspend fun handleKnowledge(route: RouteDecision, perceived: String) {
-        val question = route.params["query"] ?: perceived
+    /**
+     * Single entry point for every non-deterministic route
+     * (WEB_REQUIRED / CONVERSATIONAL / WEATHER / DISTANCE). The hybrid resolver
+     * owns the local → web → cloud decision; here we only speak the result.
+     */
+    private suspend fun handleGeneralQuery(route: RouteDecision, perceived: String) {
+        val query = route.params["query"] ?: perceived
         setOverlay("PROCESSING", "Thinking...")
-        if (question.contains("joke", ignoreCase = true)) {
-            completeConversational("KNOWLEDGE", localKnowledge.joke())
-            return
-        }
-        VoxynLogger.i("[AI] Knowledge query: \"$question\"", "AI")
-
-        // Local LLM first (offline, private), then keyless web knowledge,
-        // then a graceful fallback. Never fabricate.
-        val localAnswer = localLlm?.let {
-            try {
-                withTimeout(45_000L) { it.answer(question, conversationSession.getContext()) }
-            } catch (e: Exception) {
-                VoxynLogger.e("Local LLM timeout/failure: ${e.message}", tag = "AI")
-                null
-            }
-        }
-        val result = localAnswer ?: knowledgeProvider.knowledge(question)
+        VoxynLogger.i("[AI] General query: \"$query\" (${route.type})", "AI")
+        val result = runCatching {
+            withTimeout(60_000L) { generalQuery.resolve(query, conversationSession.getContext()) }
+        }.getOrNull()
         if (result != null) {
-            completeConversational("KNOWLEDGE", result.text)
+            completeConversational(route.type.name, result.text, result.params)
         } else {
-            completeConversational("KNOWLEDGE", localKnowledge.offlineNotice())
+            completeConversational(route.type.name, localKnowledge.cantFind())
         }
     }
 
-    private fun completeConversational(action: String, speech: String) {
+    private fun completeConversational(action: String, speech: String, params: Map<String, String> = emptyMap()) {
         tts.speak(speech)
-        conversationSession.updateLastTurn(action, speech)
+        conversationSession.updateLastTurn(action, speech, params)
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Conversational response: \"$speech\"", "ENGINE")
         setOverlay("IDLE")

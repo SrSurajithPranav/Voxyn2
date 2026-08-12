@@ -1,7 +1,8 @@
 package com.voxyn.di
 
+import com.voxyn.ai.ClaudeGeneralProvider
 import com.voxyn.ai.ClaudeIntentResolver
-import com.voxyn.ai.KnowledgeProvider
+import com.voxyn.ai.HybridGeneralResolver
 import com.voxyn.ai.LocalKnowledgeProvider
 import com.voxyn.ai.LocalLlmProvider
 import com.voxyn.ai.LocalModelManager
@@ -30,6 +31,11 @@ import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.SpeechRecognizerEngineProvider
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoskModelProvider
+import com.voxyn.web.DuckDuckGoSearchProvider
+import com.voxyn.web.NewsSearchProvider
+import com.voxyn.web.OpenMeteoWeatherProvider
+import com.voxyn.web.OsmDistanceProvider
+import com.voxyn.web.WikipediaSearchProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,12 +67,34 @@ val appModule = module {
     single { SpeechNormalizer(get()) }
     single { RequestRouter() }
 
+    // ── Web / Current Information ─────────────────────────────────────
+    single { WikipediaSearchProvider() }
+    single { NewsSearchProvider() }
+    single { DuckDuckGoSearchProvider() }
+    single<com.voxyn.web.WeatherProvider> { OpenMeteoWeatherProvider() }
+    single<com.voxyn.web.DistanceProvider> { OsmDistanceProvider() }
+
     // ── AI / Knowledge / Current Information ──────────────────────────
     single { WorldTimeProvider() }
-    single { KnowledgeProvider() }
     single { LocalKnowledgeProvider() }
     single { LocalModelManager(androidContext()) }
     single { LocalLlmProvider(androidContext(), get()) }
+
+    // ── Hybrid general intelligence: local → web → cloud ──────────────
+    single {
+        HybridGeneralResolver(
+            localLlm        = get(),
+            localKnowledge  = get(),
+            worldTime       = get(),
+            wikipedia       = get(),
+            news            = get(),
+            duckDuckGo      = get(),
+            weather         = get(),
+            distance        = get(),
+            session         = get(),
+            cloud           = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeGeneralProvider(it) }
+        )
+    }
 
     // ── Intent ────────────────────────────────────────────────────────
     single { IntentRouter() }
@@ -97,9 +125,8 @@ val appModule = module {
             speechNormalizer = get(),
             requestRouter    = get(),
             worldTimeProvider = get(),
-            knowledgeProvider = get(),
+            generalQuery     = get(),
             localKnowledge   = get(),
-            localLlm         = get(),
             claudeResolver = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeIntentResolver(it) },
             modeEngine     = get(),
             contactResolver = get()

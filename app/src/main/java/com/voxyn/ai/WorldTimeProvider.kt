@@ -7,7 +7,9 @@ import java.util.Locale
 
 /**
  * WorldTimeProvider — deterministic, fully offline "what time is it in X?".
- * Maps common city names to IANA time zones and formats the current time.
+ * Maps common city names to IANA time zones. Multi-zone countries ("the US",
+ * "Canada") return every major zone explicitly instead of inventing one time —
+ * the caller decides, and VOXYN never silently claims a single "US time".
  */
 class WorldTimeProvider {
 
@@ -29,7 +31,7 @@ class WorldTimeProvider {
         "zurich" to "Europe/Zurich", "vienna" to "Europe/Vienna", "brussels" to "Europe/Brussels",
         "stockholm" to "Europe/Stockholm", "oslo" to "Europe/Oslo", "copenhagen" to "Europe/Copenhagen",
         "warsaw" to "Europe/Warsaw", "athens" to "Europe/Athens", "lisbon" to "Europe/Lisbon",
-        "moscow" to "Europe/Moscow", "istanbul" to "Europe/Istanbul",
+        "moscow" to "Europe/Moscow", "vladivostok" to "Asia/Vladivostok", "istanbul" to "Europe/Istanbul",
         "dubai" to "Asia/Dubai", "doha" to "Asia/Qatar", "riyadh" to "Asia/Riyadh",
         "cairo" to "Africa/Cairo", "lagos" to "Africa/Lagos", "nairobi" to "Africa/Nairobi",
         "johannesburg" to "Africa/Johannesburg", "casablanca" to "Africa/Casablanca",
@@ -45,16 +47,45 @@ class WorldTimeProvider {
         "auckland" to "Pacific/Auckland", "wellington" to "Pacific/Auckland"
     )
 
-    fun timeIn(city: String): String? {
-        val key = city.trim().lowercase().replace(Regex("\\s+"), " ")
+    /** Countries with multiple time zones — returned as explicit zone lists. */
+    private val countries = mapOf(
+        "us" to listOf("new york", "chicago", "denver", "los angeles"),
+        "usa" to listOf("new york", "chicago", "denver", "los angeles"),
+        "united states" to listOf("new york", "chicago", "denver", "los angeles"),
+        "america" to listOf("new york", "chicago", "denver", "los angeles"),
+        "canada" to listOf("toronto", "vancouver"),
+        "australia" to listOf("sydney", "perth"),
+        "brazil" to listOf("sao paulo", "rio de janeiro"),
+        "russia" to listOf("moscow", "vladivostok")
+    )
+
+    fun timeIn(location: String): String? {
+        val key = location.trim().lowercase().replace(Regex("\\s+"), " ")
+        if (key.isBlank()) return null
+
+        countries[key]?.let { zones ->
+            val parts = zones.mapNotNull { city -> cities[city]?.let { zone -> formatZone(city, zone) } }
+            if (parts.size >= 2) {
+                val joined = parts.dropLast(1).joinToString(", ") + ", and " + parts.last()
+                return "${keyName(key)} spans multiple time zones. $joined."
+            }
+        }
+
         val zoneId = cities[key] ?: return null
+        return formatZone(key, zoneId)
+    }
+
+    private fun formatZone(city: String, zoneId: String): String {
         return runCatching {
             val now = ZonedDateTime.now(ZoneId.of(zoneId))
             val time = now.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
-            val pretty = key.split(" ").joinToString(" ") { w ->
+            val pretty = city.split(" ").joinToString(" ") { w ->
                 w.replaceFirstChar { it.uppercase(Locale.US) }
             }
-            "It's $time in $pretty."
-        }.getOrNull()
+            "In $pretty it's $time"
+        }.getOrNull() ?: return ""
     }
+
+    private fun keyName(key: String): String =
+        key.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase(Locale.US) } }
 }

@@ -4,6 +4,7 @@ data class ConversationTurn(
     val userInput: String,
     val action: String,
     val response: String,
+    val params: Map<String, String> = emptyMap(),
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -21,10 +22,10 @@ class ConversationSession {
         isActive = true
     }
 
-    fun updateLastTurn(action: String, response: String) {
+    fun updateLastTurn(action: String, response: String, params: Map<String, String> = emptyMap()) {
         val last = turns.lastOrNull() ?: return
         val idx = turns.size - 1
-        turns[idx] = ConversationTurn(last.userInput, action, response, last.timestamp)
+        turns[idx] = ConversationTurn(last.userInput, action, response, params.ifEmpty { last.params }, last.timestamp)
     }
 
     fun getContext(): String = turns.takeLast(3).joinToString("\n") { "User: ${it.userInput}\nVOXYN: ${it.response}" }
@@ -33,4 +34,6 @@ class ConversationSession {
         isActive = false
         turns.clear()
     }
+
+    fun lastTurn(): ConversationTurn? = turns.lastOrNull()
 }
