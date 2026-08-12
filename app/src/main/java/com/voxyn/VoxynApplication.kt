@@ -61,6 +61,12 @@ class VoxynApplication : Application() {
                 "APP"
             )
         }
+        // Pre-load the ~650 MB recognizer in the background so the first
+        // "Hey VOXYN" command is captured from the very first word.
+        val parakeetManager = get<ParakeetModelManager>()
+        val recT0 = runCatching {
+            parakeetManager.getRecognizer()
+        }.getOrNull()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val llmOk = runCatching {
                 get<LocalModelManager>().ensureModelAvailable()
@@ -74,6 +80,11 @@ class VoxynApplication : Application() {
                 "APP"
             )
         }
+        VoxynLogger.i(
+            if (recT0 != null) "ASR Parakeet recognizer pre-loaded (${System.currentTimeMillis() - recT0} ms)"
+            else "ASR Parakeet recognizer pre-load failed",
+            "APP"
+        )
     }
 
     private fun logDiagnostics() {
