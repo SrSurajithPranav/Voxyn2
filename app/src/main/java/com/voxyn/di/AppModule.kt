@@ -1,5 +1,6 @@
 package com.voxyn.di
 
+import com.voxyn.BuildConfig
 import com.voxyn.ai.ClaudeGeneralProvider
 import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.ai.HybridGeneralResolver
@@ -13,12 +14,12 @@ import com.voxyn.communication.CommunicationPolicy
 import com.voxyn.communication.ContactResolver
 import com.voxyn.communication.ContactStore
 import com.voxyn.communication.MessageComposer
-import com.voxyn.BuildConfig
 import com.voxyn.engine.VoxynEngine
-import com.voxyn.execution.ExecutionController
 import com.voxyn.execution.AppLaunchResolver
 import com.voxyn.execution.Capability
 import com.voxyn.execution.CapabilityRegistry
+import com.voxyn.execution.ExecutionController
+import com.voxyn.execution.capabilities.SystemCapability
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
@@ -107,7 +108,11 @@ val appModule = module {
     // ExecutionController depends on: context, ModeEngine, AppLaunchResolver
     single { AppCatalog(androidContext()) }
     single { AppLaunchResolver(androidContext(), get()) }
+    single { SystemCapability(androidContext()) }
+    single<Capability> { get<SystemCapability>() }
+
     single { ExecutionController(androidContext(), get(), get(), get(), get()) }
+
     single { CapabilityRegistry(getAll<Capability>()) }
 
     // ── AI ────────────────────────────────────────────────────────────

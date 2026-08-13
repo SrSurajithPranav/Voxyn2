@@ -46,8 +46,8 @@
     <application
         android:name=".VoxynApplication"
         android:label="VOXYN"
-        android:icon="@android:drawable/ic_dialog_info"
-        android:roundIcon="@android:drawable/ic_dialog_info"
+        android:icon="@drawable/ic_voxyn"
+        android:roundIcon="@drawable/ic_voxyn"
         android:supportsRtl="true"
         android:theme="@style/Theme.Voxyn"
         android:hardwareAccelerated="true"
