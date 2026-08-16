@@ -125,7 +125,10 @@ class VoxynApplication : Application() {
             )
             VoxynLogger.i("WakeWordService started from Application", "APP")
         } catch (e: Exception) {
-            VoxynLogger.e("Failed to start WakeWordService: ${e.message}", tag = "APP")
+            // On Android 14+ (SDK 34+) calling startForegroundService from Application.onCreate
+            // throws ForegroundServiceStartNotAllowedException when the app is not yet in the
+            // foreground. MainActivity.onResume → startVoxynServices() will retry once visible.
+            VoxynLogger.w("Could not start WakeWordService from Application (will retry from Activity): ${e.message}", "APP")
         }
     }
 }

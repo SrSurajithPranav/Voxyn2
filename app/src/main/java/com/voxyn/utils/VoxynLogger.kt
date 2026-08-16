@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import java.io.File
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -25,19 +24,17 @@ object VoxynLogger {
     private const val DEFAULT_TAG = "VOXYN"
     private const val SINK_URL = "http://127.0.0.1:19090/voxyn"
     private const val STATUS_FILE = "voxyn_status.log"
-    private const val DEBUG_FILE = "voxyn-debug.log"
 
     @Volatile private var sinkReady = false
     @Volatile private var appContext: Context? = null
     @Volatile private var fileSink: Uri? = null
-    @Volatile private var rawFile: File? = null
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "voxyn-log-sink").apply { isDaemon = true }
     }
     private val queue = ArrayBlockingQueue<String>(512)
 
     fun init() {
-        appContext?.let { initFileSink(it) }
+        // NOTE: initFileSink(context) must be called separately after a Context is available.
         sinkReady = true
         executor.execute {
             while (!Thread.currentThread().isInterrupted) {
@@ -57,19 +54,14 @@ object VoxynLogger {
      * be read back from Termux for on-device diagnostics (no permissions needed).
      */
     fun initFileSink(context: Context) {
+        // Guard: skip if already initialised (prevents double MediaStore insert on cold start).
+        if (fileSink != null) return
         appContext = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         try {
-            // Direct raw-path log first: readable from Termux once the user grants
-            // All-files access, and reliable on every Android version.
-            rawFile = runCatching {
-                File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    DEBUG_FILE
-                ).apply { parentFile?.mkdirs() }
-            }.getOrNull()
             val resolver = context.contentResolver
             var uri: Uri? = null
+            // Look for an existing MediaStore entry first so we never call insert() twice.
             resolver.query(
                 MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                 arrayOf(MediaStore.Downloads._ID),
@@ -126,13 +118,6 @@ object VoxynLogger {
     }
 
     private fun appendToFile(level: String, tag: String, message: String) {
-        val raw = rawFile
-        if (raw != null) {
-            try {
-                raw.appendText("$level $tag: $message\n", Charsets.UTF_8)
-            } catch (_: Exception) {
-            }
-        }
         val uri = fileSink ?: return
         val context = appContext ?: return
         try {
