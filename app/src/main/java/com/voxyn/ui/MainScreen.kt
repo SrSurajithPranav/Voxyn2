@@ -9,8 +9,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -331,7 +332,7 @@ fun CommandInput(
                 border = BorderStroke(1.dp, VoxynCyan),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Icon(Icons.Default.Mic, contentDescription = "Start voice input", tint = VoxynCyan)
+                Icon(MicIcon, contentDescription = "Start voice input", tint = VoxynCyan)
             }
             if (isRunning) {
                 OutlinedButton(
@@ -344,4 +345,46 @@ fun CommandInput(
             }
         }
     }
+}
+
+private val MicIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Mic",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).path(
+        fill = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black)
+    ) {
+        // Microphone body
+        moveTo(12f, 14f)
+        curveToRelative(1.66f, 0f, 2.99f, -1.34f, 2.99f, -3f)
+        lineTo(15f, 5f)
+        curveToRelative(0f, -1.66f, -1.34f, -3f, -3f, -3f)
+        reflectiveCurveToRelative(-3f, 1.34f, -3f, 3f)
+        lineToRelative(0f, 6f)
+        curveToRelative(0f, 1.66f, 1.34f, 3f, 3f, 3f)
+        close()
+        // Stand
+        moveTo(11f, 14.17f)
+        curveToRelative(-2.83f, -0.28f, -5f, -2.66f, -5f, -5.17f)
+        lineTo(6f, 7f)
+        lineTo(4f, 7f)
+        lineToRelative(0f, 2f)
+        curveToRelative(0f, 3.53f, 2.61f, 6.43f, 6f, 6.92f)
+        lineTo(10f, 21f)
+        lineTo(8f, 21f)
+        lineToRelative(0f, 2f)
+        lineToRelative(8f, 0f)
+        lineToRelative(0f, -2f)
+        lineToRelative(-2f, 0f)
+        lineToRelative(0f, -5.08f)
+        curveToRelative(3.39f, -0.49f, 6f, -3.39f, 6f, -6.92f)
+        lineTo(20f, 7f)
+        lineToRelative(-2f, 0f)
+        lineToRelative(0f, 2f)
+        curveToRelative(0f, 2.51f, -2.17f, 4.89f, -5f, 5.17f)
+        close()
+    }.build()
 }
