@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
         } else {
             startVoxynServices()
         }
+        checkOverlayPermission()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -154,6 +155,10 @@ class MainActivity : ComponentActivity() {
             != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.SEND_SMS)
         }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.CAMERA)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -165,16 +170,22 @@ class MainActivity : ComponentActivity() {
             permissionLauncher.launch(needed.toTypedArray())
         } else {
             startVoxynServices()
+            checkOverlayPermission()
         }
+    }
 
-        // Always request overlay permission — it's needed for DynamicIsland
+    private fun checkOverlayPermission() {
         if (!Settings.canDrawOverlays(this)) {
             VoxynLogger.w("Requesting overlay permission for DynamicIsland", "MAIN")
-            val overlayIntent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivity(overlayIntent)
+            try {
+                val overlayIntent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(overlayIntent)
+            } catch (e: Exception) {
+                VoxynLogger.w("Could not open overlay settings: ${e.message}", "MAIN")
+            }
         } else {
             startOverlayService()
         }
@@ -186,9 +197,13 @@ class MainActivity : ComponentActivity() {
             VoxynLogger.w("Microphone permission is required before starting voice services", "MAIN")
             return
         }
-        startForegroundService(Intent(this, WakeWordService::class.java).apply {
-            action = WakeWordService.ACTION_START
-        })
+        try {
+            startForegroundService(Intent(this, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_START
+            })
+        } catch (e: Exception) {
+            VoxynLogger.e("Failed to start WakeWordService: ${e.message}", tag = "MAIN")
+        }
     }
 
     private fun startVoiceInput() {
@@ -212,6 +227,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startOverlayService() {
+        if (!Settings.canDrawOverlays(this)) {
+            VoxynLogger.w("Overlay permission not granted — skipping OverlayService", "MAIN")
+            return
+        }
         try {
             startForegroundService(
                 Intent(this, OverlayService::class.java)

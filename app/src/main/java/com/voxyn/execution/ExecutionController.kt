@@ -25,7 +25,8 @@ class ExecutionController(
     private val modeEngine: ModeEngine,
     private val appLaunchResolver: AppLaunchResolver,
     private val contactResolver: ContactResolver,
-    private val composer: MessageComposer
+    private val composer: MessageComposer,
+    private val capabilityRegistry: CapabilityRegistry? = null
 ) {
 
     private val audioManager by lazy {
@@ -37,6 +38,12 @@ class ExecutionController(
 
     suspend fun execute(step: ActionStep): PhaseResult<String> {
         VoxynLogger.i("Executing: ${step.actionType}", "EXEC")
+
+        val cap = capabilityRegistry?.find(step.actionType)
+        if (cap != null) {
+            return cap.execute(step)
+        }
+
         return try {
             when (step.actionType) {
                 // ─── Accessibility Features ───────────────────────────
@@ -83,6 +90,7 @@ class ExecutionController(
                 "CONTACT_LOOKUP"   -> contactLookup(step.params)
                 "LOCK_PHONE"       -> lockPhone()
                 "MODE_ACTIVATE"    -> activateMode(step.params["mode_name"] ?: "normal")
+                "TAKE_PHOTO", "RECORD_VIDEO", "OPEN_CAMERA" -> com.voxyn.execution.capabilities.CameraCapability(context).execute(step)
                 else               -> PhaseResult.Failure("Unknown action: ${step.actionType}", canFallback = true)
             }
         } catch (e: Exception) {

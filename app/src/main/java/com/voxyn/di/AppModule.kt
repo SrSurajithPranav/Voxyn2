@@ -1,4 +1,4 @@
-﻿package com.voxyn.di
+package com.voxyn.di
 
 import com.voxyn.BuildConfig
 import com.voxyn.ai.ClaudeGeneralProvider
@@ -111,11 +111,10 @@ val appModule = module {
     single<AppNameResolver> { get<AppCatalog>() }
     single { AppLaunchResolver(androidContext(), get()) }
     single { SystemCapability(androidContext()) }
-    single<Capability> { get<SystemCapability>() }
+    single { com.voxyn.execution.capabilities.CameraCapability(androidContext()) }
+    single { CapabilityRegistry(listOf(get<SystemCapability>(), get<com.voxyn.execution.capabilities.CameraCapability>())) }
 
-    single { ExecutionController(androidContext(), get(), get(), get(), get()) }
-
-    single { CapabilityRegistry(getAll<Capability>()) }
+    single { ExecutionController(androidContext(), get(), get(), get(), get(), get()) }
 
     // â”€â”€ AI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // â”€â”€ Engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

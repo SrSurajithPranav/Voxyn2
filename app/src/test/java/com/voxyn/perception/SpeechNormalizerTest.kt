@@ -12,6 +12,9 @@ private class FakeAppNameResolver : AppNameResolver {
         "chatgpt" to "ChatGPT",
         "hungerbox" to "HungerBox",
         "hungerbooks" to "HungerBox",
+        "hungrybox" to "HungerBox",
+        "maps" to "Maps",
+        "googlemaps" to "Maps",
         "x" to "X",
         "twitter" to "X",
         "telegram" to "Telegram",
@@ -31,16 +34,21 @@ class SpeechNormalizerTest {
     @Test
     fun `open whats app becomes open WhatsApp`() {
         assertEquals("open WhatsApp", normalizer.normalize("open whats app"))
+        assertEquals("open WhatsApp", normalizer.normalize("open what sap"))
     }
 
     @Test
     fun `open chat gpt becomes open ChatGPT`() {
         assertEquals("open ChatGPT", normalizer.normalize("open chat gpt"))
+        assertEquals("open ChatGPT", normalizer.normalize("open chat jeep tee"))
+        assertEquals("open ChatGPT", normalizer.normalize("open chat gp tea"))
     }
 
     @Test
     fun `open you tube becomes open YouTube`() {
         assertEquals("open YouTube", normalizer.normalize("open you tube"))
+        assertEquals("open YouTube", normalizer.normalize("open you do"))
+        assertEquals("open YouTube", normalizer.normalize("open your job"))
     }
 
     @Test
@@ -51,6 +59,12 @@ class SpeechNormalizerTest {
     @Test
     fun `open hunger books becomes open HungerBox`() {
         assertEquals("open HungerBox", normalizer.normalize("open hunger books"))
+        assertEquals("open HungerBox", normalizer.normalize("open hungry box"))
+    }
+
+    @Test
+    fun `open google maps becomes open Maps`() {
+        assertEquals("open Maps", normalizer.normalize("open google maps"))
     }
 
     @Test

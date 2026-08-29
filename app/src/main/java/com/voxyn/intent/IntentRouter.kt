@@ -248,6 +248,19 @@ class IntentRouter {
             Regex("turn\\s*off\\s*(the\\s*)?screen", RegexOption.IGNORE_CASE)
         )),
 
+        // ─── Camera ────────────────────────────────────────────────────
+        IntentDef("TAKE_PHOTO", 0.94f, listOf(
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)(?:\\s+in\\s+(\\d+)\\s*(?:seconds|secs|s))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)(?:\\s+at\\s+(.+))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("delay_seconds" to 1, "scheduled_time" to 1)),
+
+        IntentDef("RECORD_VIDEO", 0.94f, listOf(
+            Regex("^(?:record|shoot|take)\\s+(?:a\\s+)?video(?:\\s+for\\s+(\\d+)\\s*(?:seconds|secs|s))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:record|shoot|take)\\s+(?:a\\s+)?video$", RegexOption.IGNORE_CASE),
+            Regex("^start\\s+recording\\s+video$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("duration_seconds" to 1)),
+
         // ─── Open App ──────────────────────────────────────────────────
         IntentDef("OPEN_APP", 0.88f, listOf(
             Regex("open\\s+the\\s+(.+?)\\s*app", RegexOption.IGNORE_CASE),

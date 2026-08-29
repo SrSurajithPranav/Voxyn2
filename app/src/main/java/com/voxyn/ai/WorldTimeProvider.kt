@@ -51,7 +51,10 @@ class WorldTimeProvider {
     private val countries = mapOf(
         "us" to listOf("new york", "chicago", "denver", "los angeles"),
         "usa" to listOf("new york", "chicago", "denver", "los angeles"),
+        "the us" to listOf("new york", "chicago", "denver", "los angeles"),
+        "the usa" to listOf("new york", "chicago", "denver", "los angeles"),
         "united states" to listOf("new york", "chicago", "denver", "los angeles"),
+        "the united states" to listOf("new york", "chicago", "denver", "los angeles"),
         "america" to listOf("new york", "chicago", "denver", "los angeles"),
         "canada" to listOf("toronto", "vancouver"),
         "australia" to listOf("sydney", "perth"),

@@ -864,6 +864,9 @@ class VoxynEngine(
         "SEND_WHATSAPP_MESSAGE" -> "send a WhatsApp message"
         "MESSAGE_GROUP"        -> "message a group"
         "CONTACT_LOOKUP"       -> "look up a contact"
+        "TAKE_PHOTO"           -> "take a photo"
+        "RECORD_VIDEO"         -> "record video"
+        "OPEN_CAMERA"          -> "open camera"
         else                   -> action.replace("_", " ").lowercase()
     }
 
@@ -908,6 +911,9 @@ class VoxynEngine(
             "GO_HOME"              -> "Going home."
             "READ_NOTIFICATIONS"   -> "Opening notifications."
             "REMEMBER_THIS"        -> "Saved to memory."
+            "TAKE_PHOTO"           -> "Opening Camera to take photo."
+            "RECORD_VIDEO"         -> "Opening Camera to record video."
+            "OPEN_CAMERA"          -> "Opening Camera."
             else                   -> "Done."
         }
     }

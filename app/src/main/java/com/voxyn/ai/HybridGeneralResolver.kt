@@ -95,10 +95,16 @@ class HybridGeneralResolver(
     private suspend fun distanceAnswer(originRaw: String, destinationRaw: String?): GeneralQueryResult? {
         val destination = destinationRaw ?: return null
         val origin = originRaw.trim()
-        if (origin.contains(",")) {
-            val stops = (origin.split(",").map { it.trim() } + destination.trim())
-                .filter { it.isNotBlank() }
-            if (stops.size >= 2) return if (stops.size == 2) {
+        val stops = if (destination.contains(" via ", ignoreCase = true)) {
+            val parts = destination.split(Regex("\\s+via\\s+", RegexOption.IGNORE_CASE))
+            (listOf(origin) + parts.drop(1) + parts[0]).map { it.trim() }.filter { it.isNotBlank() }
+        } else if (origin.contains(",")) {
+            (origin.split(",").map { it.trim() } + destination.trim()).filter { it.isNotBlank() }
+        } else {
+            listOf(origin, destination)
+        }
+        if (stops.size >= 2) {
+            return if (stops.size == 2) {
                 singleDistance(stops[0], stops[1])
             } else {
                 multiStopAnswer(stops)
@@ -273,9 +279,10 @@ class HybridGeneralResolver(
     private fun isDistanceQuery(q: String): Boolean = distanceParts(q) != null
 
     private fun distanceParts(q: String): Pair<String, String>? =
-        Regex("^distance between (.+) and (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
-            ?: Regex("^how far is (.+) from (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
+        Regex("^(?:what is the |what's the )?distance between (.+) and (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
+            ?: Regex("^(?:what is the |what's the )?distance from (.+) to (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
             ?: Regex("^how far is it from (.+) to (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
+            ?: Regex("^how far is (.+) (?:from|to) (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
 
     private fun isWhichCloser(q: String): Boolean =
         q.startsWith("which is closer") || q.startsWith("which one is closer")

@@ -15,6 +15,8 @@ class RequestRouterTest {
         assertEquals(RouteType.FAST_COMMAND, router.route("set a timer for 10 minutes").type)
         assertEquals(RouteType.FAST_COMMAND, router.route("turn on wifi").type)
         assertEquals(RouteType.FAST_COMMAND, router.route("navigate to bangalore").type)
+        assertEquals(RouteType.FAST_COMMAND, router.route("take a photo").type)
+        assertEquals(RouteType.FAST_COMMAND, router.route("record a video for 30 seconds").type)
     }
 
     @Test
@@ -48,6 +50,14 @@ class RequestRouterTest {
     }
 
     @Test
+    fun `how far is a to b via c routes to distance`() {
+        val r = router.route("how far is chennai to bangalore via hyderabad")
+        assertEquals(RouteType.DISTANCE, r.type)
+        assertEquals("chennai", r.params["origin"])
+        assertEquals("bangalore via hyderabad", r.params["destination"])
+    }
+
+    @Test
     fun `which is closer routes to distance`() {
         assertEquals(RouteType.DISTANCE, router.route("which is closer to chennai bangalore or kochi").type)
     }
@@ -57,12 +67,17 @@ class RequestRouterTest {
         val r = router.route("what time is it in tokyo")
         assertEquals(RouteType.CURRENT_INFORMATION, r.type)
         assertEquals("tokyo", r.params["city"])
+
+        val rUs = router.route("what time is it in the US")
+        assertEquals(RouteType.CURRENT_INFORMATION, rUs.type)
+        assertEquals("the us", rUs.params["city"]?.lowercase())
     }
 
     @Test
     fun `news questions route to web required`() {
         assertEquals(RouteType.WEB_REQUIRED, router.route("what's today's news").type)
         assertEquals(RouteType.WEB_REQUIRED, router.route("what's happening in india today").type)
+        assertEquals(RouteType.WEB_REQUIRED, router.route("what's the latest AI news").type)
     }
 
     @Test
@@ -76,11 +91,13 @@ class RequestRouterTest {
     fun `general knowledge routes to conversational`() {
         assertEquals(RouteType.CONVERSATIONAL, router.route("what is an api").type)
         assertEquals(RouteType.CONVERSATIONAL, router.route("explain black holes").type)
+        assertEquals(RouteType.CONVERSATIONAL, router.route("explain quantum computing").type)
     }
 
     @Test
     fun `memory routes stay intact`() {
         assertEquals(RouteType.MEMORY_SAVE, router.route("remember that my meeting is friday").type)
+        assertEquals(RouteType.MEMORY_SAVE, router.route("remember that Rahul's birthday is Friday").type)
         assertEquals(RouteType.MEMORY_RECALL, router.route("what did I tell you about rahul").type)
     }
 }

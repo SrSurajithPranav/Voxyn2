@@ -157,51 +157,46 @@ Future work should extend—not redesign—the foundation.
 
 # PHASE 1
 
-Foundation
+Foundation & Stability
+
+Status
+
+Complete (70% Core OS Milestone)
 
 Goal
 
-Establish a stable AI operating system core.
+Establish a stable AI operating system core and reliable startup lifecycle.
 
 Objectives
 
-Complete Execution Engine
-
-Capability Registry
-
-Planner Foundation
-
-Verification Framework
-
-Permission Framework
-
-Dependency Injection Cleanup
+✓ Complete Execution Engine
+✓ Capability Registry & CameraCapability
+✓ Speech Normalization (Phonetic & Rhotacism)
+✓ Hybrid Query Routing (Offline Time, OSM Distance, Web News)
+✓ Verification Framework
+✓ Permission Lifecycle & Android 14/15 FGS Safeguards
+✓ Dependency Injection with Koin
 
 Deliverables
 
-Capability Interface
-
-Capability Registry
-
-Capability Migration
-
-Planner Improvements
-
-Verification Engine
+✓ Capability Interface
+✓ Capability Registry
+✓ Camera Capability
+✓ Speech Normalizer
+✓ Hybrid General Resolver
+✓ Dynamic Island Overlay Stability
 
 Testing
 
-Regression Tests
+✓ Regression Tests (76+ unit tests passing)
+✓ Capability Tests
+✓ Planner Tests
 
-Capability Tests
+Risks Mitigated
 
-Planner Tests
-
-Risks
-
-Execution refactor complexity
-
-Pipeline regressions
+✓ Android 14+ FGS crashes eliminated
+✓ JVM compilation OOM avoided with SerialGC & TieredStopAtLevel=1
+✓ Overlay BadTokenException handled gracefully
 
 Dependencies
 
@@ -211,7 +206,11 @@ Architecture complete.
 
 # PHASE 2
 
-Android Intelligence
+Android Intelligence & Capability Expansion
+
+Status
+
+Complete (Core Capabilities Active)
 
 Goal
 
@@ -219,39 +218,26 @@ Turn VOXYN into a capable Android assistant.
 
 Features
 
-Open Applications
-
-Phone Controls
-
-Flashlight
-
-Volume
-
-Bluetooth
-
-Wi-Fi
-
-Brightness
-
-Media
-
-Screenshot
-
-Notifications
-
-Navigation
-
-Alarm
-
-Timer
-
-Calls
-
-Accessibility Navigation
+✓ Open Applications with fuzzy package matching & suggestions
+✓ Phone Controls & Torch
+✓ Flashlight
+✓ Volume (raise, lower)
+✓ Bluetooth
+✓ Wi-Fi
+✓ Brightness
+✓ Media Controls (Play, Pause, Skip, Prev)
+✓ Screenshot
+✓ Notifications (Read & Clear)
+✓ Navigation & Multi-stop Distance
+✓ Alarm & Timer
+✓ Calls & Contact Disambiguation
+✓ Camera (Photo, Timer Photo, Video)
+✓ WhatsApp Compose & SMS Auto-Send with Confirmation
+✓ Accessibility Navigation
 
 Expected Result
 
-Hands-free Android control.
+Hands-free Android control with honest feedback.
 
 ---
 

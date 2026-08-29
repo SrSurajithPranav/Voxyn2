@@ -43,6 +43,7 @@ class AppCatalog(private val context: Context) : AppNameResolver {
             // WhatsApp
             "whatsup" to "whatsapp",
             "wassup" to "whatsapp",
+            "whatsap" to "whatsapp",
             "wantshim" to "whatsapp",
             "whatsthat" to "whatsapp",
             "whatsit" to "whatsapp",
@@ -85,6 +86,8 @@ class AppCatalog(private val context: Context) : AppNameResolver {
 
             // Chat GPT
             "chatgpt" to "chatgpt",
+            "chatjeeptee" to "chatgpt",
+            "chatgptea" to "chatgpt",
             "chatgbt" to "chatgpt",
             "chadgpt" to "chatgpt",
             "chatgp" to "chatgpt",
@@ -93,6 +96,7 @@ class AppCatalog(private val context: Context) : AppNameResolver {
 
             // HungerBox (Vosk hears "hunger books" for the installed app)
             "hungerbooks" to "hungerbox",
+            "hungrybox" to "hungerbox",
             "hungerbox" to "hungerbox",
             "hunger box" to "hungerbox",
 

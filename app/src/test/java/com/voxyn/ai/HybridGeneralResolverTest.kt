@@ -112,6 +112,21 @@ class HybridGeneralResolverTest {
         assertNotNull(result)
         assertTrue(result!!.text.contains("Tokyo"))
         assertEquals(mapOf("kind" to "time", "location" to "tokyo"), result.params)
+
+        val resultUs = r.resolve("what time is it in the US", "")
+        assertNotNull(resultUs)
+        assertTrue(resultUs!!.text.contains("multiple time zones"))
+    }
+
+    @Test
+    fun `multi-stop distance calculation resolves via waypoints`() = runBlocking {
+        val (r, _, d) = resolver()
+        val result = r.resolve("how far is chennai to bangalore via hyderabad", "")
+        assertNotNull(result)
+        assertEquals(listOf("chennai" to "hyderabad", "hyderabad" to "bangalore"), d.calls)
+        assertTrue(result!!.text.contains("Chennai to Hyderabad"))
+        assertTrue(result.text.contains("Hyderabad to Bangalore"))
+        assertTrue(result.text.contains("Total around 600 kilometres"))
     }
 
     @Test

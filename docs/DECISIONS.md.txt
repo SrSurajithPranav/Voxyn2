@@ -688,3 +688,66 @@ the settings button).
 ## Review Date
 
 2026-08-10
+
+---
+
+# ADR-014
+
+## Title
+
+Camera capability architecture and Android background execution compliance
+
+## Status
+
+Accepted
+
+## Context
+
+User requires photo and video commands ("Take a photo", "Take a photo in 10 seconds", "Record a video for 30 seconds"). On modern Android (API 28+, API 34+ FGS restrictions), accessing camera sensors silently from background services without an active foreground UI is blocked by the platform security model.
+
+## Decision
+
+Implement `CameraCapability` implementing the `Capability` interface:
+- Enforces `android.permission.CAMERA` runtime check.
+- Handles countdown delays ("in 10 seconds") cleanly.
+- Dispatches legitimate system camera intents (`MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA`, `MediaStore.INTENT_ACTION_VIDEO_CAMERA`).
+- Integrates with `CapabilityRegistry` and `ExecutionController` with honest reporting.
+
+## Consequences
+
+- Full compliance with Android platform security rules.
+- Transparent feedback to the user without brittle or unsafe hacks.
+
+## Review Date
+
+2026-08-29
+
+---
+
+# ADR-015
+
+## Title
+
+Multi-stop distance routing and rhotacism speech normalization
+
+## Status
+
+Accepted
+
+## Context
+
+Users with rhotacism or acoustic STT confusions produce phonetic variants ("chat jeep tee" -> ChatGPT, "you do" -> YouTube, "hunger books" -> HungerBox). Additionally, geographic queries frequently involve waypoints ("how far is Chennai to Bangalore via Hyderabad").
+
+## Decision
+
+1. Extend `SpeechNormalizer` to deterministically correct phonetic variants and map against installed package labels prior to intent routing.
+2. Extend `RequestRouter` and `HybridGeneralResolver` to detect waypoints ("via", multi-stop commas), query `OsmDistanceProvider` for each leg, and synthesize an aggregate road distance and estimated driving duration.
+
+## Consequences
+
+- Robust recognition without requiring perfect pronunciation.
+- Accurate multi-leg geographic distance queries without cloud vendor lock-in.
+
+## Review Date
+
+2026-08-29

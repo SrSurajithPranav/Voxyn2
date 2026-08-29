@@ -60,9 +60,10 @@ class RequestRouter {
         }
 
         // ── Distance: "distance between Chennai and Bangalore" ─────────────
-        val distance = Regex("^distance between (.+) and (.+)$").find(t)
-            ?: Regex("^how far is (.+) from (.+)$").find(t)
+        val distance = Regex("^(?:what is the |what's the )?distance between (.+) and (.+)$").find(t)
+            ?: Regex("^(?:what is the |what's the )?distance from (.+) to (.+)$").find(t)
             ?: Regex("^how far is it from (.+) to (.+)$").find(t)
+            ?: Regex("^how far is (.+) (?:from|to) (.+)$").find(t)
         if (distance != null) {
             return RouteDecision(
                 RouteType.DISTANCE,
