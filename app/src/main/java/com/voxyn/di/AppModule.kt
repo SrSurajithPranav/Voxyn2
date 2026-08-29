@@ -16,15 +16,22 @@ import com.voxyn.communication.ContactStore
 import com.voxyn.communication.MessageComposer
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.execution.AppLaunchResolver
-import com.voxyn.execution.Capability
 import com.voxyn.execution.CapabilityRegistry
 import com.voxyn.execution.ExecutionController
+import com.voxyn.execution.capabilities.AccessibilityCapability
+import com.voxyn.execution.capabilities.AppCapability
+import com.voxyn.execution.capabilities.CameraCapability
+import com.voxyn.execution.capabilities.ClockCapability
+import com.voxyn.execution.capabilities.CommunicationCapability
+import com.voxyn.execution.capabilities.MediaCapability
+import com.voxyn.execution.capabilities.ModeCapability
+import com.voxyn.execution.capabilities.NavigationCapability
 import com.voxyn.execution.capabilities.SystemCapability
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
-import com.voxyn.perception.ContextEngine
 import com.voxyn.perception.AppNameResolver
+import com.voxyn.perception.ContextEngine
 import com.voxyn.perception.SpeechNormalizer
 import com.voxyn.router.RequestRouter
 import com.voxyn.ui.VoxynViewModel
@@ -47,42 +54,42 @@ import org.koin.dsl.module
 
 val appModule = module {
 
-    // â”€â”€ Foundation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Foundation ─────────────────────────────────────────────────────────────
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     single { MemoryRepository(androidContext()) }
     single { ContextEngine(androidContext()) }
 
-    // â”€â”€ Communication & Messaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Communication & Messaging ─────────────────────────────────────────────
     single<ContactStore> { AndroidContactStore(androidContext().contentResolver) }
     single { ContactResolver(get()) }
     single { CommunicationPolicy(androidContext()) }
     single { MessageComposer(androidContext(), get()) }
 
-    // â”€â”€ Voice & TTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Voice & TTS ───────────────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
     single { ConversationSession() }
     single { VoskModelProvider(androidContext()) }
     single { ParakeetModelManager(androidContext()) }
     single { SpeechRecognizerEngineProvider(androidContext(), get(), get(), get()) }
 
-    // â”€â”€ Perception & Routing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Perception & Routing ───────────────────────────────────────────────────
     single { SpeechNormalizer(get()) }
     single { RequestRouter() }
 
-    // â”€â”€ Web / Current Information â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Web / Current Information ─────────────────────────────────────────────
     single { WikipediaSearchProvider() }
     single { NewsSearchProvider() }
     single { DuckDuckGoSearchProvider() }
     single<com.voxyn.web.WeatherProvider> { OpenMeteoWeatherProvider() }
     single<com.voxyn.web.DistanceProvider> { OsmDistanceProvider() }
 
-    // â”€â”€ AI / Knowledge / Current Information â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── AI / Knowledge / Current Information ───────────────────────────────────
     single { WorldTimeProvider() }
     single { LocalKnowledgeProvider() }
     single { LocalModelManager(androidContext()) }
     single { LocalLlmProvider(androidContext(), get()) }
 
-    // â”€â”€ Hybrid general intelligence: local â†’ web â†’ cloud â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Hybrid general intelligence: local → web → cloud ───────────────────────
     single {
         HybridGeneralResolver(
             localLlm        = get(),
@@ -98,27 +105,48 @@ val appModule = module {
         )
     }
 
-    // â”€â”€ Intent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Intent ────────────────────────────────────────────────────────────────
     single { IntentRouter() }
 
-    // â”€â”€ Mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // ModeEngine depends on: context, TextToSpeechManager
+    // ─── Mode ──────────────────────────────────────────────────────────────────
     single { ModeEngine(androidContext(), get()) }
 
-    // â”€â”€ Execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // ExecutionController depends on: context, ModeEngine, AppLaunchResolver
+    // ─── Application Resolver ──────────────────────────────────────────────────
     single { AppCatalog(androidContext()) }
     single<AppNameResolver> { get<AppCatalog>() }
     single { AppLaunchResolver(androidContext(), get()) }
+
+    // ─── Capabilities ──────────────────────────────────────────────────────────
     single { SystemCapability(androidContext()) }
-    single { com.voxyn.execution.capabilities.CameraCapability(androidContext()) }
-    single { CapabilityRegistry(listOf(get<SystemCapability>(), get<com.voxyn.execution.capabilities.CameraCapability>())) }
+    single { AppCapability(get()) }
+    single { CommunicationCapability(androidContext(), get(), get()) }
+    single { MediaCapability(androidContext()) }
+    single { ClockCapability(androidContext()) }
+    single { NavigationCapability(androidContext()) }
+    single { AccessibilityCapability(androidContext()) }
+    single { ModeCapability(get()) }
+    single { CameraCapability(androidContext()) }
 
-    single { ExecutionController(androidContext(), get(), get(), get(), get(), get()) }
+    single {
+        CapabilityRegistry(
+            listOf(
+                get<SystemCapability>(),
+                get<AppCapability>(),
+                get<CommunicationCapability>(),
+                get<MediaCapability>(),
+                get<ClockCapability>(),
+                get<NavigationCapability>(),
+                get<AccessibilityCapability>(),
+                get<ModeCapability>(),
+                get<CameraCapability>()
+            )
+        )
+    }
 
-    // â”€â”€ AI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // â”€â”€ Engine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // VoxynEngine: fast deterministic path + hybrid conversational routing.
+    // ─── Execution ─────────────────────────────────────────────────────────────
+    single { ExecutionController(get()) }
+
+    // ─── Engine ────────────────────────────────────────────────────────────────
     single {
         VoxynEngine(
             scope          = get(),
@@ -139,7 +167,6 @@ val appModule = module {
         )
     }
 
-    // â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── UI ────────────────────────────────────────────────────────────────────
     viewModel { VoxynViewModel(engine = get(), localModelManager = get(), parakeetModelManager = get()) }
 }
-

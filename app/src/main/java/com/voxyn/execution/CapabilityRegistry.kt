@@ -26,4 +26,8 @@ class CapabilityRegistry(capabilities: List<Capability>) {
     fun find(action: String): Capability? = capabilitiesByAction[action]
 
     fun find(step: ActionStep): Capability? = find(step.actionType)
+
+    fun all(): List<Capability> = capabilitiesByAction.values.distinct()
+
+    fun supportedActions(): Set<String> = capabilitiesByAction.keys
 }
