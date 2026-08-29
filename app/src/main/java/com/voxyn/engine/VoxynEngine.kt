@@ -693,14 +693,26 @@ class VoxynEngine(
 
     private suspend fun handleMemoryRecall(route: RouteDecision) {
         val topic = route.params["topic"] ?: ""
-        val notes = memory.recallNotes(topic)
-        val speech = when {
-            notes.isEmpty() && topic.isBlank() ->
-                "I don't remember anything yet. Tell me something and I'll keep it in mind."
-            notes.isEmpty() -> "I don't remember anything about $topic."
-            else -> "You told me: ${notes.joinToString(" And also: ")}"
+        var notes = memory.recallNotes(topic)
+        if (notes.isEmpty() && topic.isNotBlank()) {
+            val words = topic.split(Regex("[^a-zA-Z0-9]+")).filter { it.length >= 3 }
+            val fallback = words.flatMap { memory.recallNotes(it) }.distinct()
+            if (fallback.isNotEmpty()) {
+                notes = fallback
+            }
         }
-        completeConversational("MEMORY_RECALL", speech)
+        if (notes.isEmpty()) {
+            val raw = route.params["raw"] ?: topic
+            if (raw.startsWith("when is", ignoreCase = true) || raw.startsWith("where is", ignoreCase = true)) {
+                handleGeneralQuery(route, raw)
+                return
+            }
+            val speech = if (topic.isBlank()) "I don't remember anything yet." else "I don't have any notes about $topic."
+            completeConversational("MEMORY_RECALL", speech)
+        } else {
+            val speech = "You told me: ${notes.joinToString(" And also: ")}"
+            completeConversational("MEMORY_RECALL", speech)
+        }
     }
 
     private suspend fun handleMemoryForget(route: RouteDecision) {
@@ -781,13 +793,17 @@ class VoxynEngine(
             }
             else -> null
         }
-        if (response == null) return false
-
-        tts.speak(response)
-        conversationSession.updateLastTurn(intent.action, response)
+        val resp = response ?: return false
+        val params = when (intent.action) {
+            "TIME" -> mapOf("kind" to "time")
+            "DATE" -> mapOf("kind" to "date")
+            else -> emptyMap()
+        }
+        tts.speak(resp)
+        conversationSession.updateLastTurn(intent.action, resp, params)
         setOverlay("IDLE")
         emit(PipelineEvent.PipelineComplete)
-        VoxynLogger.i("✓ Conversational response: \"$response\"", "ENGINE")
+        VoxynLogger.i("✓ Conversational response: \"$resp\"", "ENGINE")
         return true
     }
 

@@ -56,11 +56,12 @@ class HybridGeneralResolver(
 
             isTimeQuery(q) -> timeAnswer(extractTimeLocation(q) ?: return null)
             isWeatherQuery(q) -> weatherAnswer(extractLocation(q) ?: return null, 0)
+            isDistanceComparison(q) -> compareDistanceAnswer(q)
+            isWhichCloser(q) -> whichCloserAnswer(q)
             isDistanceQuery(q) -> distanceAnswer(
                 distanceParts(q)?.first ?: return null,
                 distanceParts(q)?.second ?: return null
             )
-            isWhichCloser(q) -> whichCloserAnswer(q)
             isNewsQuery(q) -> newsAnswer(q)
             else -> generalAnswer(q, conversationContext)
         }
@@ -283,6 +284,48 @@ class HybridGeneralResolver(
             ?: Regex("^(?:what is the |what's the )?distance from (.+) to (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
             ?: Regex("^how far is it from (.+) to (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
             ?: Regex("^how far is (.+) (?:from|to) (.+)$").find(q)?.let { it.groupValues[1] to it.groupValues[2] }
+
+    private suspend fun compareDistanceAnswer(q: String): GeneralQueryResult? {
+        val regex1 = Regex("compare (?:the )?distance (?:from|between) (.+?) (?:to|and) (.+?) and (?:from|between)?\\s*(.+?) (?:to|and) (.+)", RegexOption.IGNORE_CASE).find(q)
+        if (regex1 != null) {
+            val o1 = regex1.groupValues[1].trim()
+            val d1 = regex1.groupValues[2].trim()
+            val o2 = regex1.groupValues[3].trim()
+            val d2 = regex1.groupValues[4].trim()
+            val r1 = runCatching { distance.distance(o1, d1) }.getOrNull()
+            val r2 = runCatching { distance.distance(o2, d2) }.getOrNull()
+            if (r1 != null && r2 != null) {
+                val comp = if (r1.km < r2.km) {
+                    "${pretty(o1)} to ${pretty(d1)} is shorter (${roundKm(r1.km)} km vs ${roundKm(r2.km)} km)."
+                } else if (r1.km > r2.km) {
+                    "${pretty(o2)} to ${pretty(d2)} is shorter (${roundKm(r2.km)} km vs ${roundKm(r1.km)} km)."
+                } else {
+                    "Both routes are about the same distance (${roundKm(r1.km)} km)."
+                }
+                val text = "${pretty(o1)} to ${pretty(d1)} is about ${roundKm(r1.km)} km, and ${pretty(o2)} to ${pretty(d2)} is about ${roundKm(r2.km)} km. $comp"
+                return GeneralQueryResult(text, "maps", IntelligenceRoute.WEB, mapOf("kind" to "distance", "origin" to o1, "destination" to d1))
+            }
+        }
+
+        val regex2 = Regex("how far is (.+?) from (.+?) and (.+)", RegexOption.IGNORE_CASE).find(q)
+        if (regex2 != null) {
+            val ref = regex2.groupValues[1].trim()
+            val d1 = regex2.groupValues[2].trim()
+            val d2 = regex2.groupValues[3].trim()
+            val r1 = runCatching { distance.distance(ref, d1) }.getOrNull()
+            val r2 = runCatching { distance.distance(ref, d2) }.getOrNull()
+            if (r1 != null && r2 != null) {
+                val text = "${pretty(ref)} to ${pretty(d1)} is about ${roundKm(r1.km)} km, while ${pretty(ref)} to ${pretty(d2)} is about ${roundKm(r2.km)} km."
+                return GeneralQueryResult(text, "maps", IntelligenceRoute.WEB, mapOf("kind" to "distance", "origin" to ref, "destination" to d1))
+            }
+        }
+        return null
+    }
+
+    private fun isDistanceComparison(q: String): Boolean =
+        q.startsWith("compare distance") ||
+            q.startsWith("compare the distance") ||
+            Regex("^how far is .+ from .+ and .+$", RegexOption.IGNORE_CASE).containsMatchIn(q)
 
     private fun isWhichCloser(q: String): Boolean =
         q.startsWith("which is closer") || q.startsWith("which one is closer")

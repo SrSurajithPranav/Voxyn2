@@ -23,6 +23,9 @@ data class AppEntry(
 class AppCatalog(private val context: Context) : AppNameResolver {
 
     companion object {
+        private const val MIN_MATCH_CONFIDENCE = 60
+        private const val MIN_SUGGESTION_CONFIDENCE = 50
+
         private val COMMON_ALIASES = mapOf(
             // YouTube (Vosk hears "your job", "you do", "you tube", ...)
             "yourjob" to "youtube",
@@ -188,11 +191,11 @@ class AppCatalog(private val context: Context) : AppNameResolver {
         val entries = all()
         val scored = entries
             .map { it to score(query, it) }
-            .filter { (_, s) -> s > 0 }
+            .filter { (_, s) -> s >= MIN_MATCH_CONFIDENCE }
             .sortedByDescending { (_, s) -> s }
 
         if (scored.isEmpty()) {
-            VoxynLogger.w("No app matched '$spoken' (query='$query')", "APPS")
+            VoxynLogger.w("No app matched '$spoken' (query='$query', threshold=$MIN_MATCH_CONFIDENCE)", "APPS")
             return null
         }
         scored.take(3).forEach { (e, s) ->
@@ -207,7 +210,7 @@ class AppCatalog(private val context: Context) : AppNameResolver {
         if (query.isEmpty()) return emptyList()
         return all()
             .map { it to score(query, it) }
-            .filter { (_, s) -> s >= 70 }
+            .filter { (_, s) -> s >= MIN_SUGGESTION_CONFIDENCE }
             .sortedByDescending { (_, s) -> s }
             .take(limit)
             .map { (e, _) -> e.label }

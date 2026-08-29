@@ -72,23 +72,28 @@ class IntentRouter {
         // SEND_UNSUPPORTED_CHANNEL out-rank SEND_MESSAGE so the channel is
         // resolved first. SEND_CURRENT_MESSAGE above stays untouched.
         IntentDef("MESSAGE_GROUP", 0.95f, listOf(
-            Regex("^(?:send\\s+)?message\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
-            Regex("^(?:send\\s+)?message\\s+(?:the\\s+)?(.+?\\s+group)\\s+(.+)$", RegexOption.IGNORE_CASE)
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:on\\s+whatsapp\\s+)?(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:on\\s+whatsapp\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:the\\s+)?(.+?\\s+group)\\s+(?:a\\s+)?(?:whatsapp(?:\\s+message)?\\s+)?(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:the\\s+)?(.+?\\s+group)\\s+(?:a\\s+)?(?:whatsapp(?:\\s+message)?\\s+)(.+)$", RegexOption.IGNORE_CASE)
         )),
 
-        IntentDef("SEND_UNSUPPORTED_CHANNEL", 0.94f, listOf(
-            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)(.+?)\\s+message\\s+to\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE),
-            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)(.+?)\\s+message\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE)
-        )),
-
-        IntentDef("SEND_WHATSAPP_MESSAGE", 0.93f, listOf(
-            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
-            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
-            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to)?+\\s+(.+)$", RegexOption.IGNORE_CASE),
+        IntentDef("SEND_WHATSAPP_MESSAGE", 0.94f, listOf(
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(.+?)\\s+(?:on|via|through)\\s+whatsapp\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(.+?)\\s+(?:on|via|through)\\s+whatsapp\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to\\s+|\\s+)(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+to\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE),
             Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
             Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(.+)$", RegexOption.IGNORE_CASE),
             Regex("^whatsapp\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
-            Regex("^whatsapp\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE)
+            Regex("^whatsapp\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_UNSUPPORTED_CHANNEL", 0.93f, listOf(
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)([a-zA-Z0-9]+)\\s+message\\s+to\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)([a-zA-Z0-9]+)\\s+message\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE)
         )),
 
         IntentDef("SEND_MESSAGE", 0.92f, listOf(
@@ -434,7 +439,7 @@ class IntentRouter {
             patternIndex: Int
         ): Map<String, String> = when (action) {
             "MESSAGE_GROUP" -> mapOf(
-                "group" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                "group" to (match.groupValues.getOrNull(1)?.trim()?.removePrefix("the ") ?: ""),
                 "message" to (match.groupValues.getOrNull(2)?.trim() ?: "")
             )
             "SEND_WHATSAPP_MESSAGE" -> buildMap {

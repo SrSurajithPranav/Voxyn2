@@ -32,11 +32,11 @@ class RequestRouter {
             return RouteDecision(RouteType.MEMORY_SAVE, mapOf("note" to note), 0.95f)
         }
 
-        // ── Memory: "what did I tell you about Rahul?" ────────────────────
-        val recall = Regex("^(?:what did i (?:tell|say|ask|mention|promise)(?: you)?(?: about)?|what do you (?:know|remember|have)(?: about)?|do you remember(?: about)?)\\s+(.+)$").find(t)
+        // ── Memory: "what did I tell you about Rahul?" / "when is Rahul's meeting?" ───
+        val recall = Regex("^(?:what did i (?:tell|say|ask|mention|promise)(?: you)?(?: about)?|what do you (?:know|remember|have)(?: about)?|do you remember(?: about)?|recall|when is|where is)\\s+(.+)$").find(t)
         if (recall != null) {
             val topic = recall.groupValues[1].trim().trimEnd('?', '.', '!')
-            return RouteDecision(RouteType.MEMORY_RECALL, mapOf("topic" to topic), 0.85f)
+            return RouteDecision(RouteType.MEMORY_RECALL, mapOf("topic" to topic, "raw" to perceived.trim()), 0.85f)
         }
 
         // ── Memory forget: "forget that", "forget about Rahul" ───────────
@@ -73,12 +73,16 @@ class RequestRouter {
                 RouteType.DISTANCE,
                 mapOf(
                     "origin" to distance.groupValues[1].trim().trimEnd('?', '.', '!'),
-                    "destination" to distance.groupValues[2].trim().trimEnd('?', '.', '!')
+                    "destination" to distance.groupValues[2].trim().trimEnd('?', '.', '!'),
+                    "query" to perceived.trim()
                 ),
                 0.9f
             )
         }
-        if (t.startsWith("which is closer") || t.startsWith("which one is closer")) {
+        if (t.startsWith("which is closer") || t.startsWith("which one is closer") ||
+            t.startsWith("compare distance") || t.startsWith("compare the distance") ||
+            t.contains("shortest route")
+        ) {
             return RouteDecision(RouteType.DISTANCE, mapOf("query" to perceived.trim()), 0.85f)
         }
 

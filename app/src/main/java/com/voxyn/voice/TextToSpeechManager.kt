@@ -1,15 +1,33 @@
 package com.voxyn.voice
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import com.voxyn.utils.VoxynLogger
+import kotlinx.coroutines.CompletableDeferred
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * TextToSpeechManager — robust TTS playback with reliable completion callbacks
+ * and single-speaker enforcement.
+ *
+ * Prevents TTS from talking over itself, queueing duplicate stale speech,
+ * or interfering with microphone listening.
+ */
 class TextToSpeechManager(context: Context) {
 
     private var tts: TextToSpeech? = null
-    private var isReady = false
+    @Volatile private var isReady = false
     private var pendingSpeech: String? = null
+    private var pendingCallback: (() -> Unit)? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val isCurrentlySpeaking = AtomicBoolean(false)
+    private val callbacks = ConcurrentHashMap<String, () -> Unit>()
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -17,11 +35,14 @@ class TextToSpeechManager(context: Context) {
                 tts?.language = Locale.US
                 tts?.setSpeechRate(1.0f)
                 tts?.setPitch(1.0f)
+                setupProgressListener()
                 isReady = true
                 VoxynLogger.i("TTS ready", "TTS")
-                pendingSpeech?.let {
+                pendingSpeech?.let { text ->
+                    val cb = pendingCallback
                     pendingSpeech = null
-                    speakNow(it)
+                    pendingCallback = null
+                    speakNow(text, cb)
                 }
             } else {
                 VoxynLogger.e("TTS init failed: $status", tag = "TTS")
@@ -29,31 +50,87 @@ class TextToSpeechManager(context: Context) {
         }
     }
 
-    fun speak(text: String) {
-        if (text.isBlank()) return
+    private fun setupProgressListener() {
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                isCurrentlySpeaking.set(true)
+                VoxynLogger.d("TTS started: $utteranceId", "TTS")
+            }
+
+            override fun onDone(utteranceId: String?) {
+                isCurrentlySpeaking.set(false)
+                VoxynLogger.d("TTS completed: $utteranceId", "TTS")
+                if (utteranceId != null) {
+                    val cb = callbacks.remove(utteranceId)
+                    cb?.let { mainHandler.post(it) }
+                }
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                isCurrentlySpeaking.set(false)
+                VoxynLogger.w("TTS error on: $utteranceId", "TTS")
+                if (utteranceId != null) {
+                    val cb = callbacks.remove(utteranceId)
+                    cb?.let { mainHandler.post(it) }
+                }
+            }
+
+            override fun onError(utteranceId: String?, errorCode: Int) {
+                isCurrentlySpeaking.set(false)
+                VoxynLogger.w("TTS error ($errorCode) on: $utteranceId", "TTS")
+                if (utteranceId != null) {
+                    val cb = callbacks.remove(utteranceId)
+                    cb?.let { mainHandler.post(it) }
+                }
+            }
+        })
+    }
+
+    fun speak(text: String, onComplete: (() -> Unit)? = null) {
+        if (text.isBlank()) {
+            onComplete?.invoke()
+            return
+        }
         if (!isReady) {
             pendingSpeech = text
+            pendingCallback = onComplete
             VoxynLogger.d("TTS not ready; response queued", "TTS")
             return
         }
-        speakNow(text)
+        speakNow(text, onComplete)
     }
 
-    private fun speakNow(text: String) {
+    suspend fun speakAndWait(text: String) {
+        if (text.isBlank()) return
+        val deferred = CompletableDeferred<Unit>()
+        speak(text) { deferred.complete(Unit) }
+        deferred.await()
+    }
+
+    private fun speakNow(text: String, onComplete: (() -> Unit)?) {
+        val utteranceId = "voxyn_${System.currentTimeMillis()}_${(0..999).random()}"
+        if (onComplete != null) {
+            callbacks[utteranceId] = onComplete
+        }
         VoxynLogger.i("TTS: \"$text\"", "TTS")
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "voxyn_${System.currentTimeMillis()}")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
-    @Suppress("DEPRECATION")
-    fun isSpeaking(): Boolean = tts?.isSpeaking == true
+    fun isSpeaking(): Boolean = isCurrentlySpeaking.get() || (tts?.isSpeaking == true)
 
-    fun stop() { tts?.stop() }
+    fun stop() {
+        callbacks.clear()
+        isCurrentlySpeaking.set(false)
+        tts?.stop()
+    }
 
     fun shutdown() {
-        tts?.stop()
+        stop()
         tts?.shutdown()
         tts = null
         isReady = false
         pendingSpeech = null
+        pendingCallback = null
     }
 }

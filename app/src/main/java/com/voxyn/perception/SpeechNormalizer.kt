@@ -14,6 +14,30 @@ import com.voxyn.utils.VoxynLogger
  */
 class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
 
+    companion object {
+        private val PHONETIC_ALIASES = listOf(
+            // ChatGPT
+            Regex("\\bchat\\s*(?:gee\\s*pee\\s*tee|jeep\\s*tee|gp\\s*tea|gbt|gpt)\\b") to "chatgpt",
+            Regex("\\bchad\\s*gpt\\b") to "chatgpt",
+
+            // YouTube
+            Regex("\\b(?:your\\s*job|you\\s*do|you\\s*tube|u\\s*tube|you\\s*toob|yeetube)\\b") to "youtube",
+
+            // WhatsApp
+            Regex("\\b(?:whats\\s*app|what\\s*sap|watts?\\s*app|wassup|whatsup|wasapp)\\b") to "whatsapp",
+            Regex("^what's\\s+app$") to "whatsapp",
+
+            // HungerBox
+            Regex("\\b(?:hunger\\s*books|hungry\\s*box|hunger\\s*box)\\b") to "hungerbox",
+
+            // Instagram
+            Regex("\\b(?:instagaram|istagram|insta)\\b") to "instagram",
+
+            // X / Twitter
+            Regex("\\b(?:twitter|tweeter|twatter)\\b") to "x"
+        )
+    }
+
     fun normalize(raw: String): String {
         val original = raw.trim().lowercase()
         var t = original
@@ -29,39 +53,10 @@ class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
         t = t.replace(Regex("^opening\\s+"), "open ")
         t = t.replace(Regex("^opened\\s+"), "open ")
 
-        // Common speech / phonetic / rhotacism replacements
-        // YouTube: "your job", "you do", "you tube", "u tube", "yeetube"
-        t = t.replace(Regex("\\byour\\s+job\\b"), "youtube")
-        t = t.replace(Regex("\\byou\\s+do\\b"), "youtube")
-        t = t.replace(Regex("\\byou\\s+tube\\b"), "youtube")
-        t = t.replace(Regex("\\bu\\s+tube\\b"), "youtube")
-        t = t.replace(Regex("\\byou\\s+toob\\b"), "youtube")
-        t = t.replace(Regex("\\byeetube\\b"), "youtube")
-
-        // WhatsApp: "whats app", "what sap", "watts app", "wassup", "whatsup", "wasapp"
-        t = t.replace(Regex("\\bwhats\\s+app\\b"), "whatsapp")
-        t = t.replace(Regex("\\bwhat\\s+sap\\b"), "whatsapp")
-        t = t.replace(Regex("\\bwatts?\\s+app\\b"), "whatsapp")
-        t = t.replace(Regex("\\bwassup\\b"), "whatsapp")
-        t = t.replace(Regex("\\bwhatsup\\b"), "whatsapp")
-        t = t.replace(Regex("\\bwasapp\\b"), "whatsapp")
-        t = t.replace(Regex("^what's\\s+app$"), "whatsapp")
-
-        // ChatGPT: "chat gpt", "chat jeep tee", "chat gp tea", "chad gpt", "chat gbt"
-        t = t.replace(Regex("\\bchat\\s+jeep\\s*tee\\b"), "chatgpt")
-        t = t.replace(Regex("\\bchat\\s+gp\\s*tea\\b"), "chatgpt")
-        t = t.replace(Regex("\\bchat\\s+gpt\\b"), "chatgpt")
-        t = t.replace(Regex("\\bchad\\s+gpt\\b"), "chatgpt")
-        t = t.replace(Regex("\\bchat\\s+gbt\\b"), "chatgpt")
-
-        // HungerBox: "hunger books", "hungry box", "hunger box"
-        t = t.replace(Regex("\\bhunger\\s+books\\b"), "hungerbox")
-        t = t.replace(Regex("\\bhungry\\s+box\\b"), "hungerbox")
-        t = t.replace(Regex("\\bhunger\\s+box\\b"), "hungerbox")
-
-        // Instagram: "insta", "instagaram", "istagram"
-        t = t.replace(Regex("\\binstagaram\\b"), "instagram")
-        t = t.replace(Regex("\\bistagram\\b"), "instagram")
+        // Apply phonetic / rhotacism normalization
+        for ((pattern, replacement) in PHONETIC_ALIASES) {
+            t = t.replace(pattern, replacement)
+        }
 
         // "open the/a X" and trailing politeness
         t = t.replace(Regex("^open\\s+(?:the|a|an)\\s+"), "open ")
