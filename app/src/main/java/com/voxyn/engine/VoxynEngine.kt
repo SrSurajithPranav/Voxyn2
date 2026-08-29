@@ -137,6 +137,7 @@ class VoxynEngine(
         when (route.type) {
             RouteType.MEMORY_SAVE -> { handleMemorySave(route); return }
             RouteType.MEMORY_RECALL -> { handleMemoryRecall(route); return }
+            RouteType.MEMORY_FORGET -> { handleMemoryForget(route); return }
             RouteType.WEB_REQUIRED -> { handleGeneralQuery(route, perceived); return }
             RouteType.CONVERSATIONAL -> { handleGeneralQuery(route, perceived); return }
             RouteType.WEATHER -> { handleGeneralQuery(route, perceived); return }
@@ -700,6 +701,19 @@ class VoxynEngine(
             else -> "You told me: ${notes.joinToString(" And also: ")}"
         }
         completeConversational("MEMORY_RECALL", speech)
+    }
+
+    private suspend fun handleMemoryForget(route: RouteDecision) {
+        val topic = route.params["topic"] ?: ""
+        if (topic.isBlank() || topic == "that" || topic == "it") {
+            val removed = memory.forgetLast()
+            val speech = if (removed) "I've forgotten that." else "I don't have any notes to forget."
+            completeConversational("MEMORY_FORGET", speech)
+        } else {
+            val count = memory.forgetNotes(topic)
+            val speech = if (count > 0) "I've forgotten what you told me about $topic." else "I didn't find any notes about $topic."
+            completeConversational("MEMORY_FORGET", speech)
+        }
     }
 
     private suspend fun handleWorldTime(route: RouteDecision) {

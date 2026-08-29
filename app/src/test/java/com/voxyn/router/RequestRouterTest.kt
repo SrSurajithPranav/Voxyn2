@@ -99,5 +99,7 @@ class RequestRouterTest {
         assertEquals(RouteType.MEMORY_SAVE, router.route("remember that my meeting is friday").type)
         assertEquals(RouteType.MEMORY_SAVE, router.route("remember that Rahul's birthday is Friday").type)
         assertEquals(RouteType.MEMORY_RECALL, router.route("what did I tell you about rahul").type)
+        assertEquals(RouteType.MEMORY_FORGET, router.route("forget that").type)
+        assertEquals(RouteType.MEMORY_FORGET, router.route("forget about rahul").type)
     }
 }

@@ -80,6 +80,24 @@ class MessageComposer(
     }
 
     /**
+     * Opens SMS app with the conversation prefilled.
+     */
+    fun composeSms(phoneNumber: String, message: String): PhaseResult<String> {
+        val uri = Uri.parse("smsto:$phoneNumber")
+        val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
+            putExtra("sms_body", message)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            VoxynLogger.i("COMMUNICATION: recipient=$phoneNumber channel=SMS action=COMPOSE_SMS status=COMPOSE_OPENED", TAG)
+            PhaseResult.Success("Opened messages to $phoneNumber")
+        } else {
+            sendSms(phoneNumber, message)
+        }
+    }
+
+    /**
      * Opens WhatsApp with the conversation prefilled.
      * Tries wa.me deep link first (targets exact contact), falls back to ACTION_SEND.
      */

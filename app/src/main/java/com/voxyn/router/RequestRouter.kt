@@ -10,7 +10,7 @@ import com.voxyn.utils.VoxynLogger
  * to its provider. Only when the fast path fails does the engine consider AI.
  */
 enum class RouteType {
-    FAST_COMMAND, CURRENT_INFORMATION, MEMORY_SAVE, MEMORY_RECALL,
+    FAST_COMMAND, CURRENT_INFORMATION, MEMORY_SAVE, MEMORY_RECALL, MEMORY_FORGET,
     WEB_REQUIRED, WEATHER, DISTANCE, CONVERSATIONAL, UNKNOWN
 }
 
@@ -28,12 +28,8 @@ class RequestRouter {
         // ── Memory: "remember that my meeting with Rahul is Friday" ──────
         val save = Regex("^(remember|note|save|don't\\s*forget|dont\\s*forget|remind\\s*me\\s+that)\\s+(that\\s+|this\\s+)?(.+)$").find(t)
         if (save != null) {
-            val note = save.groupValues[3].trim().trimEnd('.', '!')
-            val isQuestion = Regex("^(what|who|why|when|where|how)\\b").containsMatchIn(note)
-            val isScreenAction = note == "this" || note == "this screen" || note == "that"
-            if (note.isNotBlank() && !isQuestion && !isScreenAction) {
-                return RouteDecision(RouteType.MEMORY_SAVE, mapOf("note" to note), 0.9f)
-            }
+            val note = save.groupValues[3].trim().trimEnd('.', '!', '?')
+            return RouteDecision(RouteType.MEMORY_SAVE, mapOf("note" to note), 0.95f)
         }
 
         // ── Memory: "what did I tell you about Rahul?" ────────────────────
@@ -41,6 +37,14 @@ class RequestRouter {
         if (recall != null) {
             val topic = recall.groupValues[1].trim().trimEnd('?', '.', '!')
             return RouteDecision(RouteType.MEMORY_RECALL, mapOf("topic" to topic), 0.85f)
+        }
+
+        // ── Memory forget: "forget that", "forget about Rahul" ───────────
+        val forget = Regex("^(?:forget that|forget it|clear that memory|delete that memory)$").find(t)
+            ?: Regex("^(?:forget (?:about|what i (?:told|said|asked)(?: you)?(?: about)?))\\s+(.+)$").find(t)
+        if (forget != null) {
+            val topic = if (forget.groupValues.size > 1) forget.groupValues[1].trim().trimEnd('?', '.', '!') else ""
+            return RouteDecision(RouteType.MEMORY_FORGET, mapOf("topic" to topic), 0.9f)
         }
 
         // ── Current information: "what time is it in New York?" ───────────

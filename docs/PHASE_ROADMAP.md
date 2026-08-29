@@ -161,7 +161,7 @@ Foundation & Stability
 
 Status
 
-Complete (70% Core OS Milestone)
+Complete (Core Stability Achieved)
 
 Goal
 
@@ -170,25 +170,24 @@ Establish a stable AI operating system core and reliable startup lifecycle.
 Objectives
 
 ✓ Complete Execution Engine
-✓ Capability Registry & CameraCapability
+✓ Pure CapabilityRegistry Architecture & DI
 ✓ Speech Normalization (Phonetic & Rhotacism)
 ✓ Hybrid Query Routing (Offline Time, OSM Distance, Web News)
-✓ Verification Framework
+✓ Real Verification Framework with Post-Condition Checks
 ✓ Permission Lifecycle & Android 14/15 FGS Safeguards
 ✓ Dependency Injection with Koin
 
 Deliverables
 
-✓ Capability Interface
-✓ Capability Registry
-✓ Camera Capability
-✓ Speech Normalizer
-✓ Hybrid General Resolver
+✓ Capability Interface & CapabilityRegistry
+✓ 9 Modular Capability Classes (System, App, Comm, Media, Clock, Nav, A11y, Mode, Camera)
+✓ Speech Normalizer with Rhotacism Compensation
+✓ Hybrid General Resolver with Multi-Turn Referent Binding
 ✓ Dynamic Island Overlay Stability
 
 Testing
 
-✓ Regression Tests (76+ unit tests passing)
+✓ Regression Tests (100% test suite passing)
 ✓ Capability Tests
 ✓ Planner Tests
 
@@ -210,15 +209,15 @@ Android Intelligence & Capability Expansion
 
 Status
 
-Complete (Core Capabilities Active)
+Complete (85% V1 Milestone)
 
 Goal
 
-Turn VOXYN into a capable Android assistant.
+Turn VOXYN into a fully capable Android AI operating system assistant.
 
 Features
 
-✓ Open Applications with fuzzy package matching & suggestions
+✓ Open Applications with fuzzy package matching, PWAs, and suggestions
 ✓ Phone Controls & Torch
 ✓ Flashlight
 ✓ Volume (raise, lower)
@@ -228,16 +227,16 @@ Features
 ✓ Media Controls (Play, Pause, Skip, Prev)
 ✓ Screenshot
 ✓ Notifications (Read & Clear)
-✓ Navigation & Multi-stop Distance
+✓ Navigation & Multi-stop Distance Routing
 ✓ Alarm & Timer
 ✓ Calls & Contact Disambiguation
 ✓ Camera (Photo, Timer Photo, Video)
 ✓ WhatsApp Compose & SMS Auto-Send with Confirmation
-✓ Accessibility Navigation
+✓ Accessibility Navigation & Screen Scraping
 
 Expected Result
 
-Hands-free Android control with honest feedback.
+Hands-free Android control with honest, verified feedback.
 
 ---
 
@@ -245,43 +244,35 @@ Hands-free Android control with honest feedback.
 
 Memory
 
+Status
+
+Active (Phase 3 Core Deliverables Implemented)
+
 Goal
 
 Persistent intelligent memory.
 
 Features
 
-Conversation Memory
-
-Preference Memory
-
-Routine Memory
-
-Semantic Search
-
-Embeddings
-
-Memory Ranking
-
-Memory Expiration
-
-Memory Reflection
+✓ Explicit User Memory Notes ("Remember that ...")
+✓ Keyword & Semantic Topic Recall ("What did I ask you to remember about ...")
+✓ Forgetting Capabilities ("Forget that", "Forget about ...")
+✓ User Preference Memory
+✓ Action Trust Scores & Success Recording
+- Routine Memory
+- Memory Reflection
 
 Deliverables
 
-Memory Repository
-
-Memory Retrieval
-
-Memory Update Engine
+✓ Memory Repository with DataStore Persistence
+✓ Memory Retrieval & Search
+✓ Memory Forget Operations
 
 Testing
 
-Memory consistency
-
-Persistence
-
-Retrieval accuracy
+✓ Memory consistency
+✓ Persistence
+✓ Retrieval accuracy
 
 ---
 
@@ -289,35 +280,26 @@ Retrieval accuracy
 
 Context Engine
 
+Status
+
+Active (Device Context Infrastructure Implemented)
+
 Goal
 
 Understand the user's current situation.
 
 Context Sources
 
-Location
+✓ Battery Level & Charging Status
+✓ Wi-Fi Connectivity State
+✓ Audio / Music Playback State
+✓ Bluetooth & Wired Headset Connection
+✓ Foreground App Tracking
+✓ Screen State
+- Location
+- Calendar & Activity
 
-Battery
-
-Calendar
-
-Activity
-
-Screen
-
-Foreground App
-
-Time
-
-Bluetooth Devices
-
-Wi-Fi
-
-Headphones
-
-Driving
-
-Context should influence planning.
+Context informs planning and intent resolution without invasive telemetry.
 
 ---
 

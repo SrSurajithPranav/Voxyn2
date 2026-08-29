@@ -751,3 +751,65 @@ Users with rhotacism or acoustic STT confusions produce phonetic variants ("chat
 ## Review Date
 
 2026-08-29
+
+---
+
+# ADR-016
+
+## Title
+
+Complete modular CapabilityRegistry execution architecture and post-condition verification
+
+## Status
+
+Accepted
+
+## Context
+
+`ExecutionController` previously contained legacy switch-case action dispatch that duplicated functionality, bypassed Koin dependency injection, and complicated testing and scaling of Android capabilities. In addition, execution outcome was often equated with simple API invocation without verifying actual system post-conditions.
+
+## Decision
+
+1. Completely refactor `ExecutionController` into a lightweight delegator that resolves executable actions solely through `CapabilityRegistry.find(step.actionType)`.
+2. Implement and register 9 focused capabilities in Koin: `SystemCapability`, `AppCapability`, `CommunicationCapability`, `MediaCapability`, `ClockCapability`, `NavigationCapability`, `AccessibilityCapability`, `ModeCapability`, and `CameraCapability`.
+3. Strengthen the `verify` lifecycle method across capabilities to query observable Android system state (`WifiManager.isWifiEnabled`, `BluetoothAdapter.isEnabled`, `AudioManager` volume/ringer, torch state, screenshot file creation) and return `VerificationOutcome.Success`, `Failure`, `PartialSuccess`, or `Unverified`.
+
+## Consequences
+
+- Clean separation of concerns complying with SOLID principles.
+- Independent testability of capabilities with pure unit tests.
+- High transparency and honesty in execution reporting.
+
+## Review Date
+
+2026-08-29
+
+---
+
+# ADR-017
+
+## Title
+
+Multi-turn conversational follow-ups and explicit user memory lifecycle
+
+## Status
+
+Accepted
+
+## Context
+
+User interactions with voice assistants often involve conversational follow-ups (*"What time is it in New York?"* -> *"And London?"* -> *"What about Tokyo?"*) and explicit requests to remember or forget information (*"Remember that my gym is at 6 PM"*, *"What did I ask you to remember about Rahul?"*, *"Forget that"*).
+
+## Decision
+
+1. Extend `ConversationSession` and `HybridGeneralResolver` to maintain referent state across turns within a 30-second follow-up window, resolving relative inquiries for time, weather, and distance without requiring full re-prompting.
+2. Extend `MemoryRepository` with dedicated persistent explicit notes storage, keyword-based recall, and forgetting capabilities (`forgetNotes`, `forgetLast`), strictly isolated from transient conversation history and user preferences.
+
+## Consequences
+
+- Natural, multi-turn conversational interaction.
+- User-controlled, persistent explicit memory that respects privacy.
+
+## Review Date
+
+2026-08-29

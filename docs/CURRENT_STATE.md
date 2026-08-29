@@ -45,11 +45,11 @@ VOXYN
 
 Current Version
 
-Pre-Alpha
+Alpha (V1 Candidate)
 
 Development Stage
 
-Active Development
+Feature Complete & Hardened (~85% V1 Milestone)
 
 Primary Platform
 
@@ -69,7 +69,7 @@ Latest Stable
 
 Architecture Status
 
-Stable
+Stable & Pure Modular Capability Architecture
 
 Pipeline Status
 
@@ -93,14 +93,25 @@ Build an always-on Android AI Operating System capable of:
 
 Current Progress
 
-70% Completion Milestone Achieved:
-- Startup stability and Android 14/15 FGS permission lifecycle fully stabilized.
-- Voice pipeline and AudioRecord handoff between Vosk and Parakeet verified.
-- Speech normalizer with rhotacism & phonetic compensation layer active.
-- Hybrid query routing with multi-stop distance, multi-zone world time, real-time news, and memory persistence active.
-- Modular capabilities registered (SystemCapability, CameraCapability, AppLaunchResolver, MessageComposer).
-- DynamicIsland HUD overlay crash-proof.
-- Full automated unit test suite passing (76+ tests).
+85% V1 Completion Milestone Achieved:
+- Complete CapabilityRegistry Migration: ExecutionController purely delegates all actions through DI-injected Capability instances (zero legacy dispatch switch blocks).
+- 9 Modular Capabilities Implemented & Registered:
+  1. SystemCapability (Wi-Fi, Bluetooth, Flashlight, Volume, Modes, Brightness, Airplane, Battery, Lock, Screenshot)
+  2. AppCapability (App resolution, launcher activities, PWAs)
+  3. CommunicationCapability (Phone calls, WhatsApp compose, SMS auto-send with confirmation)
+  4. MediaCapability (Play, Pause, Next, Prev tracks)
+  5. ClockCapability (Alarms, Timers)
+  6. NavigationCapability (Google Maps & geo navigation)
+  7. AccessibilityCapability (On-screen messaging, likes, scroll up/down, go back/home, notifications)
+  8. ModeCapability (Driving, Workout, Study, Sleep, Meeting, Morning)
+  9. CameraCapability (Photo capture, timer photo, video recording)
+- Real Post-Condition Verification: Checks actual system state post-execution (Wi-Fi, Bluetooth, Torch, Stream Volume, Ringer Mode, Screenshot file creation) and reports SUCCESS, FAILURE, PARTIAL, or UNVERIFIED.
+- Voice Pipeline & Natural Conversational Follow-Up: ConversationSession & HybridGeneralResolver maintain multi-turn referents ("What time is it in New York?" -> "And London?" -> "What about Tokyo?").
+- Robust App Resolution & Alias Engine: AppCatalog & AppLaunchResolver support installed apps, WebAPKs/PWAs (HungerBox), phonetic aliases ("chat jeep tee" -> ChatGPT, "you do" -> YouTube, "twitter" -> X), and honest missing app feedback without blind retries.
+- Persistent Explicit Memory: MemoryRepository supports saving, keyword recall, and forgetting explicit notes ("Remember that my gym is at 6 PM", "What did I tell you about Rahul?", "Forget that", "Forget about Rahul"), isolated from user preferences and action trust scores.
+- Device Context Awareness: ContextEngine captures low-risk device state snapshots (battery %, charging, Wi-Fi, audio/music playback, headset connection, screen state).
+- Canonical Documentation: Normalized docs/ to ARCHITECTURE.md, CODING_RULES.md, CURRENT_STATE.md, DECISIONS.md, PHASE_ROADMAP.md, and README.md.
+- Automated Test & Build Validation: 100% unit tests passing with zero failures. assembleDebug builds cleanly.
 
 ---
 
