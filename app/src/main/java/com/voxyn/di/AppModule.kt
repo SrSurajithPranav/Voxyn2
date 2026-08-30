@@ -90,7 +90,7 @@ val appModule = module {
     single { LocalLlmProvider(androidContext(), get()) }
 
     // ─── Hybrid general intelligence: local → web → cloud ───────────────────────
-    single {
+    single<com.voxyn.ai.GeneralQueryResolver> {
         HybridGeneralResolver(
             localLlm        = get(),
             localKnowledge  = get(),
