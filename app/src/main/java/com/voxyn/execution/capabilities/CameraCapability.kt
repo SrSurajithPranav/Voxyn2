@@ -117,6 +117,8 @@ class CameraCapability(
     }
 
     override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
-        return VerificationOutcome.Success
+        // A system camera intent only proves that Android accepted the request; it
+        // cannot prove the user completed capture. Never report a photo as taken.
+        return VerificationOutcome.Unverified
     }
 }

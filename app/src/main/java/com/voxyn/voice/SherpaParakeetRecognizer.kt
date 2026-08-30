@@ -99,14 +99,15 @@ class SherpaParakeetRecognizer(
             return
         }
         audioRecord = record
-        record.startRecording()
+        try {
+            record.startRecording()
 
-        VoxynLogger.i("ASR: command capture started", "ASR")
-        val startTime = SystemClock.elapsedRealtime()
-        var speechNotified = false
-        val buffer = ShortArray(CHUNK_SAMPLES)
+            VoxynLogger.i("ASR: command capture started", "ASR")
+            val startTime = SystemClock.elapsedRealtime()
+            var speechNotified = false
+            val buffer = ShortArray(CHUNK_SAMPLES)
 
-        while (isActive && isRunning) {
+            while (isActive && isRunning) {
             val read = record.read(buffer, 0, buffer.size)
             if (read <= 0) continue
             val now = SystemClock.elapsedRealtime()
@@ -157,7 +158,20 @@ class SherpaParakeetRecognizer(
                 isRunning = false
                 return
             }
-            delay(10L)
+                delay(10L)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            VoxynLogger.e("ASR capture failed: ${e.message}", tag = "ASR")
+            listener?.onError(e.message ?: "Audio capture failed")
+        } finally {
+            // Natural completion must release the mic too; VoiceInputService may not
+            // call stop() until it has started processing the transcript.
+            isRunning = false
+            releaseAudioRecord()
+            try { vad?.release() } catch (_: Exception) {}
+            vad = null
         }
     }
 

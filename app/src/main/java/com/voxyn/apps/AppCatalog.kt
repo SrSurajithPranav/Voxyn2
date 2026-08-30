@@ -198,6 +198,12 @@ class AppCatalog(private val context: Context) : AppNameResolver {
             VoxynLogger.w("No app matched '$spoken' (query='$query', threshold=$MIN_MATCH_CONFIDENCE)", "APPS")
             return null
         }
+        // Two similarly scored fuzzy matches are not a safe launch decision.
+        // Return no match so AppLaunchResolver can ask for confirmation instead.
+        if (scored.size > 1 && scored[0].second - scored[1].second < 8 && scored[0].second < 100) {
+            VoxynLogger.w("Ambiguous app match for '$spoken': ${scored.take(2).map { it.first.label }}", "APPS")
+            return null
+        }
         scored.take(3).forEach { (e, s) ->
             VoxynLogger.i("App match: '${e.label}' score=$s (query='$query')", "APPS")
         }

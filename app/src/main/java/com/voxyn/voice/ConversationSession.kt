@@ -9,6 +9,11 @@ data class ConversationTurn(
 )
 
 class ConversationSession {
+    companion object {
+        /** Keeps a long follow-up exchange from becoming an unbounded in-memory log. */
+        private const val MAX_TURNS = 8
+    }
+
     val turns = mutableListOf<ConversationTurn>()
     var isActive = false
     var lastInteractionTime = 0L
@@ -18,6 +23,7 @@ class ConversationSession {
 
     fun addTurn(turn: ConversationTurn) {
         turns.add(turn)
+        while (turns.size > MAX_TURNS) turns.removeAt(0)
         lastInteractionTime = System.currentTimeMillis()
         isActive = true
     }

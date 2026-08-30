@@ -193,6 +193,8 @@ class VoiceInputService : Service() {
     private fun handleResult(text: String) {
         if (stopping) return
         isListening = false
+        activeEngine?.stop()
+        activeEngine = null
         cancelWatchdog()
         consecutiveFailures = 0
         updateNotification("Processing...")
@@ -226,6 +228,9 @@ class VoiceInputService : Service() {
 
     private fun handleSilence(reason: String) {
         if (stopping) return
+        isListening = false
+        activeEngine?.stop()
+        activeEngine = null
         if (session.turns.isEmpty()) {
             // First listen after the wake phrase — retry once before returning to IDLE
             // so a slow start or a VAD hiccup doesn't end the conversation prematurely.
@@ -275,8 +280,9 @@ class VoiceInputService : Service() {
         cancelWatchdog()
         session.end()
         updateNotification("VOXYN — say Hey VOXYN")
-        tts.speak("Standing by.")
-        resumeWakeAndStop()
+        // Do not resume the wake recognizer until the spoken status is finished,
+        // otherwise it can hear VOXYN's own voice as a wake phrase.
+        tts.speak("Standing by.") { resumeWakeAndStop() }
     }
 
     private fun startWindowWatchdog() {

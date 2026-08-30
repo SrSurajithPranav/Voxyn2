@@ -10,6 +10,8 @@ import kotlinx.coroutines.CompletableDeferred
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * TextToSpeechManager — robust TTS playback with reliable completion callbacks
@@ -28,6 +30,8 @@ class TextToSpeechManager(context: Context) {
 
     private val isCurrentlySpeaking = AtomicBoolean(false)
     private val callbacks = ConcurrentHashMap<String, () -> Unit>()
+    private val utteranceSequence = AtomicLong()
+    private val activeUtteranceId = AtomicReference<String?>(null)
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -46,6 +50,7 @@ class TextToSpeechManager(context: Context) {
                 }
             } else {
                 VoxynLogger.e("TTS init failed: $status", tag = "TTS")
+                completeCallbacks()
             }
         }
     }
@@ -53,11 +58,13 @@ class TextToSpeechManager(context: Context) {
     private fun setupProgressListener() {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                isCurrentlySpeaking.set(true)
+                if (utteranceId == activeUtteranceId.get()) isCurrentlySpeaking.set(true)
                 VoxynLogger.d("TTS started: $utteranceId", "TTS")
             }
 
             override fun onDone(utteranceId: String?) {
+                if (utteranceId != activeUtteranceId.get()) return
+                activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
                 VoxynLogger.d("TTS completed: $utteranceId", "TTS")
                 if (utteranceId != null) {
@@ -68,6 +75,8 @@ class TextToSpeechManager(context: Context) {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                if (utteranceId != activeUtteranceId.get()) return
+                activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
                 VoxynLogger.w("TTS error on: $utteranceId", "TTS")
                 if (utteranceId != null) {
@@ -77,6 +86,8 @@ class TextToSpeechManager(context: Context) {
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
+                if (utteranceId != activeUtteranceId.get()) return
+                activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
                 VoxynLogger.w("TTS error ($errorCode) on: $utteranceId", "TTS")
                 if (utteranceId != null) {
@@ -109,7 +120,14 @@ class TextToSpeechManager(context: Context) {
     }
 
     private fun speakNow(text: String, onComplete: (() -> Unit)?) {
-        val utteranceId = "voxyn_${System.currentTimeMillis()}_${(0..999).random()}"
+        // QUEUE_FLUSH alone is not enough to make stale completion callbacks safe.
+        // Complete any replaced request so speakAndWait callers cannot hang.
+        tts?.stop()
+        activeUtteranceId.set(null)
+        isCurrentlySpeaking.set(false)
+        completeCallbacks()
+        val utteranceId = "voxyn_${utteranceSequence.incrementAndGet()}"
+        activeUtteranceId.set(utteranceId)
         if (onComplete != null) {
             callbacks[utteranceId] = onComplete
         }
@@ -120,7 +138,8 @@ class TextToSpeechManager(context: Context) {
     fun isSpeaking(): Boolean = isCurrentlySpeaking.get() || (tts?.isSpeaking == true)
 
     fun stop() {
-        callbacks.clear()
+        completeCallbacks()
+        activeUtteranceId.set(null)
         isCurrentlySpeaking.set(false)
         tts?.stop()
     }
@@ -132,5 +151,11 @@ class TextToSpeechManager(context: Context) {
         isReady = false
         pendingSpeech = null
         pendingCallback = null
+    }
+
+    private fun completeCallbacks() {
+        val pending = callbacks.values.toList()
+        callbacks.clear()
+        pending.forEach { callback -> mainHandler.post(callback) }
     }
 }

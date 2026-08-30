@@ -96,8 +96,11 @@ class VoskCommandRecognizer(
         }
         audioRecord = record
 
-        val recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), buildCommandGrammar())
-        record.startRecording()
+        var recognizer: Recognizer? = null
+        try {
+            val activeRecognizer = Recognizer(model, SAMPLE_RATE.toFloat(), buildCommandGrammar())
+            recognizer = activeRecognizer
+            record.startRecording()
 
         VoxynLogger.i("ASR: Vosk fallback capture started (8s silence timeout)", "ASR")
         val startTime = System.currentTimeMillis()
@@ -118,8 +121,8 @@ class VoskCommandRecognizer(
             if (read <= 0) continue
             val now = System.currentTimeMillis()
 
-            if (recognizer.acceptWaveForm(buffer, read)) {
-                val text = JSONObject(recognizer.result).optString("text", "").trim()
+            if (activeRecognizer.acceptWaveForm(buffer, read)) {
+                val text = JSONObject(activeRecognizer.result).optString("text", "").trim()
                 if (text.isNotEmpty()) {
                     finalText = text
                     hadSpeech = true
@@ -128,7 +131,7 @@ class VoskCommandRecognizer(
                     break
                 }
             } else {
-                val partial = JSONObject(recognizer.getPartialResult()).optString("partial", "").trim()
+                val partial = JSONObject(activeRecognizer.getPartialResult()).optString("partial", "").trim()
                 if (partial.isNotEmpty()) {
                     lastPartial = partial
                     hadSpeech = true
@@ -138,7 +141,7 @@ class VoskCommandRecognizer(
             }
 
             if (hadSpeech && now - lastSpeechTime >= ENDPOINT_SILENCE_MS) {
-                try { recognizer.result } catch (_: Exception) {}
+                try { activeRecognizer.result } catch (_: Exception) {}
                 break
             }
             if (!hadSpeech && now - startTime >= SILENCE_TIMEOUT_MS) {
@@ -147,16 +150,23 @@ class VoskCommandRecognizer(
             delay(20L)
         }
 
-        val best = finalText ?: lastPartial.takeIf { it.isNotEmpty() }
-        if (best != null) {
-            VoxynLogger.i("ASR: transcript = \"$best\"", "ASR")
-            listener?.onResult(best, 0L, 0L)
-        } else {
-            listener?.onNoSpeech()
+            val best = finalText ?: lastPartial.takeIf { it.isNotEmpty() }
+            if (best != null) {
+                VoxynLogger.i("ASR: transcript = \"$best\"", "ASR")
+                listener?.onResult(best, 0L, 0L)
+            } else {
+                listener?.onNoSpeech()
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            VoxynLogger.e("ASR: Vosk capture failed: ${e.message}", tag = "ASR")
+            listener?.onError(e.message ?: "Vosk capture failed")
+        } finally {
+            isRunning = false
+            try { recognizer?.close() } catch (_: Exception) {}
+            releaseAudioRecord()
         }
-        isRunning = false
-        try { recognizer.close() } catch (_: Exception) {}
-        releaseAudioRecord()
     }
 
     /** Grammar-biased word list so the small Vosk model hears VOXYN vocabulary. */

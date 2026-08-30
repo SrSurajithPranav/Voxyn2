@@ -113,7 +113,7 @@ class VoxynEngine(
         setOverlay("LISTENING")
 
         val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) } ?: return
-        setOverlay("PROCESSING")
+        setOverlay("THINKING")
 
         // ─── Pending conversational flows (confirmation / clarification / draft) ─
         if (pendingIntent != null) {
@@ -167,7 +167,7 @@ class VoxynEngine(
 
             if (claudeResolver != null) {
                 VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
-                setOverlay("PROCESSING", "Thinking...")
+                setOverlay("THINKING", "Thinking...")
                 acknowledge()
                 val result: ClaudeResult? = try {
                     val contextPrompt = conversationSession.getContext().ifEmpty { "No prior conversation." }
@@ -273,11 +273,11 @@ class VoxynEngine(
     /** Executes a single, already-decided intent through plan → verify → learn. */
     private suspend fun executeIntent(intent: IntentResult, claudeSpeak: String?) {
         val actionText = friendlyAction(intent.action)
-        setOverlay("SPEAKING", actionText)
+        setOverlay("EXECUTING", actionText)
 
         val plan     = phase(PipelinePhase.PLAN)   { buildPlan(intent) } ?: return
         val executed = executeWithRecovery(plan)    ?: return
-        val outcome  = phase(PipelinePhase.VERIFY) { verify(executed, plan.actions.lastOrNull()) }  ?: return
+        val outcome  = phase(PipelinePhase.VERIFY) { verify(executed) }  ?: return
 
         emit(PipelineEvent.VerificationResult(outcome))
 
@@ -285,6 +285,7 @@ class VoxynEngine(
         setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
 
         val speech = claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
+        setOverlay("SPEAKING", speech)
         tts.speak(speech)
         conversationSession.updateLastTurn(intent.action, speech)
 
@@ -686,7 +687,7 @@ class VoxynEngine(
             setOverlay("IDLE")
             return
         }
-        setOverlay("PROCESSING", "Remembering...")
+        setOverlay("THINKING", "Remembering...")
         scope.launch { memory.saveNote(note) }
         completeConversational("MEMORY_SAVE", "Got it. I'll remember that.")
     }
@@ -745,7 +746,7 @@ class VoxynEngine(
      */
     private suspend fun handleGeneralQuery(route: RouteDecision, perceived: String) {
         val query = route.params["query"] ?: perceived
-        setOverlay("PROCESSING", "Thinking...")
+        setOverlay("THINKING", "Thinking...")
         VoxynLogger.i("[AI] General query: \"$query\" (${route.type})", "AI")
         val result = runCatching {
             withTimeout(60_000L) { generalQuery.resolve(query, conversationSession.getContext()) }

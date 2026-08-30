@@ -251,7 +251,7 @@ Current modules include:
 ✓ World time & OSM driving / geocoded distance routing
 ✓ Contact lookup & phone dialer
 ✓ WhatsApp composition pre-filled & SMS auto-send
-✓ Hands-free camera capture
+✓ Camera intent hand-off with CAMERA runtime-permission checks
 ✓ Explicit persistent memory repository
 ✓ Dynamic Island overlay HUD
 ✓ Clean debug APK build & 100% unit test pass rate
@@ -265,6 +265,22 @@ Current implementation does not yet support:
 1. **WhatsApp auto-send without user interaction**: WhatsApp has no public background sending API without Accessibility UI automation. VOXYN safely opens the WhatsApp conversation with recipient and message pre-filled for 1-tap send (SMS supports full automated dispatch after confirmation).
 2. **WhatsApp group background dispatch**: Group messaging is routed and prepared but restricted to WhatsApp compose intent due to public platform constraints.
 3. **Initial Offline Model Download**: On a clean installation with no existing local backup in `/Download/VoxynAI/`, VOXYN downloads ~1.2 GB of INT8 models (Parakeet ASR + Gemma LLM) before fully offline neural execution; on subsequent installs it restores automatically from local storage.
+4. **Dedicated background camera capture**: Android 14+ restricts while-in-use camera access from a background process. VOXYN uses a visible system-camera hand-off and reports it as unverified; it must not claim that a photo was captured. Scheduled photo/video capture is not reliable without a user-visible foreground camera session.
+5. **SDK 36 validation**: The checked-in build is currently `compileSdk`/`targetSdk` 34 because this workspace only has Android platform 34 installed. Android 16 device validation requires platform 36 to be installed before the target can be raised and tested.
+
+---
+
+# Stabilization Update — August 2026
+
+- Command recognizers now release `AudioRecord`, VAD, Vosk recognizers, and streams on normal completion, cancellation, and error paths.
+- Voice input explicitly relinquishes a command recognizer before processing a result or retrying, preventing microphone ownership overlap with wake-word detection.
+- TTS uses a monotonic utterance ID and ignores stale platform callbacks; replacing or stopping speech completes outstanding callbacks so waiting callers cannot hang.
+- The conversation session is bounded to the most recent eight turns; long exchanges cannot retain an unbounded in-memory transcript.
+- HUD execution now transitions through `THINKING`, `EXECUTING`, and `SPEAKING` rather than showing execution as speech.
+- App matching rejects close fuzzy ties rather than arbitrarily selecting an installed app.
+- `VoxynEngine`'s invalid `plan.actions` reference was corrected to its existing `ExecutionPlan` verification API.
+
+**Verification pending:** the final clean test/build run is in progress. ADB is not installed or on `PATH` in this workspace, so install/device/logcat checks cannot be performed here.
 
 ---
 
