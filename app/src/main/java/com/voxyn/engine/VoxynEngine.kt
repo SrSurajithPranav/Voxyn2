@@ -277,7 +277,7 @@ class VoxynEngine(
 
         val plan     = phase(PipelinePhase.PLAN)   { buildPlan(intent) } ?: return
         val executed = executeWithRecovery(plan)    ?: return
-        val outcome  = phase(PipelinePhase.VERIFY) { verify(executed) }  ?: return
+        val outcome  = phase(PipelinePhase.VERIFY) { verify(executed, plan.actions.lastOrNull()) }  ?: return
 
         emit(PipelineEvent.VerificationResult(outcome))
 

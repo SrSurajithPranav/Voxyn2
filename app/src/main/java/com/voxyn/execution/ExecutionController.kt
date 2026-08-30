@@ -2,10 +2,11 @@ package com.voxyn.execution
 
 import com.voxyn.core.ActionStep
 import com.voxyn.core.PhaseResult
+import com.voxyn.core.VerificationOutcome
 import com.voxyn.utils.VoxynLogger
 
 class ExecutionController(
-    private val capabilityRegistry: CapabilityRegistry
+    val capabilityRegistry: CapabilityRegistry
 ) {
 
     suspend fun execute(step: ActionStep): PhaseResult<String> {
@@ -22,6 +23,16 @@ class ExecutionController(
         } catch (e: Exception) {
             VoxynLogger.e("Execution error for ${step.actionType}: ${e.message}", e, "EXEC")
             PhaseResult.Failure(e.message ?: "Execution failed", canFallback = true)
+        }
+    }
+
+    suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
+        val capability = capabilityRegistry.find(step.actionType) ?: return VerificationOutcome.Unverified
+        return try {
+            capability.verify(step, executionResult)
+        } catch (e: Exception) {
+            VoxynLogger.e("Verification error for ${step.actionType}: ${e.message}", e, "VERIFY")
+            VerificationOutcome.Unverified
         }
     }
 }

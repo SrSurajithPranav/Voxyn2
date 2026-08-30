@@ -126,7 +126,6 @@ class VoxynAccessibilityService : AccessibilityService() {
         VoxynLogger.i("A11Y: Performing REMEMBER_THIS (scraping screen text)", "A11Y")
         val root = rootInActiveWindow
         val textContent = if (root != null) extractAllText(root).joinToString("\n") else "No screen text captured"
-        val timestamp = System.currentTimeMillis()
 
         scope.launch {
             memory.recordOutcome("REMEMBER_THIS", true)

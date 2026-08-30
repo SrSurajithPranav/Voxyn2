@@ -59,7 +59,7 @@ open class WikipediaSearchProvider : WebSearchProvider {
             }
         }
         topic = topic
-            .replace(Regex("\\b(tell me|for me|please|about|the|a|an)\\b.*$"), "")
+            .replace(Regex("^(tell me|for me|please|about)\\s+"), "")
             .replace(Regex("\\b(the|a|an)\\b"), "")
             .trim()
 

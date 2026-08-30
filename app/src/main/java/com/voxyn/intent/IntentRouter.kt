@@ -411,6 +411,7 @@ class IntentRouter {
         return IntentResult(action = "UNKNOWN", rawInput = trimmed, confidence = 0.1f)
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun fallback(intent: IntentResult): IntentResult? = null
 
     fun buildSteps(intent: IntentResult): List<ActionStep> = listOf(

@@ -14,27 +14,56 @@ import com.voxyn.utils.VoxynLogger
  */
 class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
 
+    data class PhoneticRule(
+        val canonical: String,
+        val patterns: List<Regex>
+    )
+
     companion object {
-        private val PHONETIC_ALIASES = listOf(
-            // ChatGPT
-            Regex("\\bchat\\s*(?:gee\\s*pee\\s*tee|jeep\\s*tee|gp\\s*tea|gbt|gpt)\\b") to "chatgpt",
-            Regex("\\bchad\\s*gpt\\b") to "chatgpt",
-
-            // YouTube
-            Regex("\\b(?:your\\s*job|you\\s*do|you\\s*tube|u\\s*tube|you\\s*toob|yeetube)\\b") to "youtube",
-
-            // WhatsApp
-            Regex("\\b(?:whats\\s*app|what\\s*sap|watts?\\s*app|wassup|whatsup|wasapp)\\b") to "whatsapp",
-            Regex("^what's\\s+app$") to "whatsapp",
-
-            // HungerBox
-            Regex("\\b(?:hunger\\s*books|hungry\\s*box|hunger\\s*box)\\b") to "hungerbox",
-
-            // Instagram
-            Regex("\\b(?:instagaram|istagram|insta)\\b") to "instagram",
-
-            // X / Twitter
-            Regex("\\b(?:twitter|tweeter|twatter)\\b") to "x"
+        private val PHONETIC_RULES = listOf(
+            PhoneticRule(
+                canonical = "chatgpt",
+                patterns = listOf(
+                    Regex("\\bchat\\s*(?:gee\\s*pee\\s*tee|jeep\\s*tee|gp\\s*tea|gbt|gpt|g\\s*p\\s*t)\\b"),
+                    Regex("\\bchad\\s*gpt\\b"),
+                    Regex("\\bchatgpt\\b")
+                )
+            ),
+            PhoneticRule(
+                canonical = "youtube",
+                patterns = listOf(
+                    Regex("\\b(?:your\\s*job|you\\s*do|you\\s*tube|u\\s*tube|you\\s*toob|yeetube|ur\\s*job|your\\s*do|youdou|youto|yodo|your\\s*due|your\\s*dew)\\b"),
+                    Regex("\\byoutube\\b")
+                )
+            ),
+            PhoneticRule(
+                canonical = "whatsapp",
+                patterns = listOf(
+                    Regex("\\b(?:whats\\s*app|what\\s*sap|watts?\\s*app|wassup|whatsup|wasapp|watsapp)\\b"),
+                    Regex("^what's\\s+app$"),
+                    Regex("\\bwhatsapp\\b")
+                )
+            ),
+            PhoneticRule(
+                canonical = "hungerbox",
+                patterns = listOf(
+                    Regex("\\b(?:hunger\\s*books|hungry\\s*box|hunger\\s*box|hungerbooks|hungrybox)\\b"),
+                    Regex("\\bhungerbox\\b")
+                )
+            ),
+            PhoneticRule(
+                canonical = "instagram",
+                patterns = listOf(
+                    Regex("\\b(?:instagaram|istagram|insta|instag)\\b"),
+                    Regex("\\binstagram\\b")
+                )
+            ),
+            PhoneticRule(
+                canonical = "x",
+                patterns = listOf(
+                    Regex("\\b(?:twitter|tweeter|twatter)\\b")
+                )
+            )
         )
     }
 
@@ -54,8 +83,10 @@ class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
         t = t.replace(Regex("^opened\\s+"), "open ")
 
         // Apply phonetic / rhotacism normalization
-        for ((pattern, replacement) in PHONETIC_ALIASES) {
-            t = t.replace(pattern, replacement)
+        for (rule in PHONETIC_RULES) {
+            for (pattern in rule.patterns) {
+                t = t.replace(pattern, rule.canonical)
+            }
         }
 
         // "open the/a X" and trailing politeness
