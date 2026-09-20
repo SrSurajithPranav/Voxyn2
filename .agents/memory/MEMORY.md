@@ -1,0 +1,1 @@
+- [Post-merge setup hook](post-merge-hook.md) — task merges require a configured `.replit` postMerge path and a runnable root-relative script.
