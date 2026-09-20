@@ -232,6 +232,7 @@ class VoxynEngine(
             is DecisionState.AwaitingConfirmation -> {
                 pendingInput = perceived
                 pendingIntent = intent
+                conversationSession.activate()
                 val promptText = "Confirm ${friendlyAction(intent.action)}?"
                 setOverlay("CONFIRMATION", promptText)
                 tts.speak("Just to confirm — should I ${confirmActionPhrase(intent)}? Say yes.")
@@ -240,6 +241,7 @@ class VoxynEngine(
             }
             is DecisionState.AwaitingClarification -> {
                 pendingInput = perceived
+                conversationSession.activate()
                 val msg = decision.missing.firstOrNull() ?: "please clarify"
                 setOverlay("ERROR", msg)
                 tts.speak("I need more info: $msg.")

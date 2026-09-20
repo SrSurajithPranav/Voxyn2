@@ -1,0 +1,891 @@
+You are a senior Android/Kotlin engineer working on VOXYN.
+
+VOXYN is an always-on personal AI assistant designed to feel like a natural JARVIS-style assistant.
+
+IMPORTANT:
+This is an EXISTING PROJECT.
+
+Do NOT redesign the architecture.
+Do NOT replace working systems with new frameworks.
+Do NOT rewrite files unnecessarily.
+Do NOT remove existing functionality just to simplify implementation.
+
+Your job is to inspect the existing repository first, understand its architecture, and then implement the requested conversational voice system while preserving everything that already works.
+
+==================================================
+PHASE 0 — MANDATORY REPOSITORY AUDIT
+==================================================
+
+Before changing ANY code:
+
+Inspect the complete relevant source tree.
+
+Read and understand, if present:
+
+- docs/ARCHITECTURE.md
+- docs/CODING_RULES.md
+- AndroidManifest.xml
+- VoxynApplication.kt
+- AppModule.kt
+- WakeWordService.kt
+- VoiceInputService.kt
+- VoxynEngine.kt
+- TextToSpeechManager.kt
+- ClaudeIntentResolver and related intent/resolver classes
+- all voice/audio related classes
+- all service classes
+- all settings classes/screens
+- all AI/LLM provider classes
+- all fallback/provider selection logic
+- all action execution classes
+- all notification-related code
+
+Also search the repository for:
+
+- WakeWord
+- Vosk
+- SpeechRecognizer
+- RecognitionService
+- TTS
+- TextToSpeech
+- AudioFocus
+- Claude
+- Gemini
+- Groq
+- OpenRouter
+- LLM
+- fallback
+- intent
+- Koin
+- foreground service
+- microphone
+- voice
+- conversation
+- context
+
+Do NOT assume that the architecture described in this prompt already exists.
+
+Determine the ACTUAL architecture first.
+
+Then implement against the existing architecture.
+
+==================================================
+PRIMARY GOAL
+==================================================
+
+Upgrade VOXYN from a one-command voice interaction into a natural conversational voice assistant.
+
+Desired interaction:
+
+User:
+"Hey VOXYN"
+
+VOXYN:
+"Yes?"
+
+User:
+"Turn on flashlight"
+
+VOXYN:
+"Flashlight on."
+
+User:
+"Open YouTube"
+
+VOXYN:
+"Opening YouTube."
+
+User:
+"Set a 10 minute timer"
+
+VOXYN:
+"Timer's running."
+
+User becomes silent.
+
+After approximately 30 seconds:
+
+VOXYN:
+"Standing by."
+
+Then VOXYN returns to wake-word detection.
+
+The user should NOT need to touch the phone screen during this flow.
+
+==================================================
+IMPORTANT ARCHITECTURAL PRINCIPLE
+==================================================
+
+Preserve the existing VOXYN pipeline.
+
+Do not bypass:
+
+INPUT
+→ PERCEPTION
+→ INTENT
+→ CONFIDENCE
+→ RISK
+→ DECISION
+→ PLAN
+→ EXECUTE
+→ VERIFY
+→ LEARN
+
+If the repository has a different but equivalent implementation, preserve that implementation.
+
+Voice conversation should feed into the existing engine.
+
+It must NOT create a second command-processing architecture.
+
+==================================================
+PART 1 — CONVERSATION SESSION
+==================================================
+
+If the project does not already have an equivalent conversation-context mechanism, create:
+
+app/src/main/java/com/voxyn/voice/ConversationSession.kt
+
+Use Koin singleton scope.
+
+Conceptually maintain:
+
+- conversation active/inactive
+- last interaction timestamp
+- maximum conversation window = 30 seconds
+- recent conversation turns
+- context for follow-up commands
+
+Each turn should contain:
+
+- user input
+- resolved action/intent
+- VOXYN response
+- timestamp
+
+Keep only a small recent context, for example the last 3 turns.
+
+Provide functionality equivalent to:
+
+isWithinWindow()
+addTurn(...)
+getContext()
+end()
+
+IMPORTANT:
+
+Do not duplicate an existing conversation/session implementation.
+
+If the repository already contains an appropriate session/context mechanism, extend and reuse it instead.
+
+Thread safety must be considered because services, TTS callbacks and engine processing may occur on different callbacks/threads.
+
+==================================================
+PART 2 — WAKE WORD
+==================================================
+
+Use the repository's existing wake-word implementation if it is functional.
+
+If Vosk is already integrated, preserve it.
+
+If Vosk is not integrated, inspect the existing implementation and choose the smallest compatible change required for offline wake-word detection.
+
+Desired activation phrases:
+
+- "hey voxyn"
+- "hi voxyn"
+- "okay voxyn"
+- "voxyn"
+
+The implementation must avoid false activation as much as reasonably possible.
+
+When wake phrase is detected:
+
+1. Temporarily stop/suspend wake-word recognition.
+2. Ensure microphone ownership is transferred correctly.
+3. Speak an acknowledgement such as:
+
+"Yes?"
+"Listening."
+"What do you need?"
+"Go ahead."
+"I'm here."
+
+4. Start command listening.
+
+Do not run two microphone consumers simultaneously.
+
+==================================================
+PART 3 — COMMAND LISTENING
+==================================================
+
+Use the EXISTING VoiceInputService/STT implementation wherever possible.
+
+Do not replace it merely because another implementation is easier.
+
+When listening:
+
+- show appropriate foreground notification
+- indicate that VOXYN is listening
+- show partial recognition results if the current STT system supports them
+- use a reasonable silence timeout around 8 seconds
+
+If Google STT is already supported, preserve it.
+
+If the project already has an STT fallback mechanism, preserve it.
+
+If there is no fallback and adding one is safe, implement:
+
+Preferred STT
+→ existing Google/system recognizer
+→ Android/default SpeechRecognizer
+
+Do NOT hard-code package/component names unless the existing architecture already uses them and the device compatibility has been verified.
+
+The application must gracefully handle:
+
+- recognizer unavailable
+- microphone unavailable
+- permission denied
+- network unavailable
+- recognizer timeout
+- recognizer error
+- service restart
+
+==================================================
+PART 4 — CONVERSATION MODE
+==================================================
+
+After a successful wake phrase + command:
+
+Activate a conversation session.
+
+Conversation window:
+
+30 seconds from the most recent successful interaction.
+
+During this window:
+
+The user does NOT need to say "Hey VOXYN" again.
+
+Example:
+
+Hey VOXYN
+→ Yes?
+
+Turn on flashlight
+→ Flashlight on.
+
+Open YouTube
+→ Opening YouTube.
+
+Set volume to 80
+→ Volume adjusted.
+
+Every successful interaction refreshes the 30-second timer.
+
+If another command arrives while the window is active:
+
+Process it directly through the normal VOXYN engine.
+
+Do NOT bypass intent classification, risk checks or action verification.
+
+When the conversation window expires:
+
+1. Stop command listening.
+2. Speak:
+
+"Standing by."
+
+3. End/clear the conversation session.
+4. Return to wake-word detection.
+
+==================================================
+PART 5 — IMPORTANT SESSION LOGIC
+==================================================
+
+Do NOT implement the session logic in a way where adding a new turn automatically makes an expired conversation appear active.
+
+The order must be logically correct.
+
+For example:
+
+Before processing a follow-up command, determine whether the existing session is still active.
+
+After a successful command:
+
+refresh the session timestamp.
+
+Do not use:
+
+addTurn()
+→ isActive = true
+→ immediately check isWithinWindow()
+
+as the only mechanism for determining whether the previous session was still alive.
+
+The state machine must explicitly distinguish:
+
+IDLE
+WAKE_DETECTED
+LISTENING
+PROCESSING
+RESPONDING
+CONVERSATION_ACTIVE
+RETURNING_TO_WAKE
+
+Avoid race conditions between these states.
+
+==================================================
+PART 6 — TTS / AUDIO OWNERSHIP
+==================================================
+
+Use the existing TextToSpeechManager.
+
+Do NOT create a second TTS engine.
+
+TTS must never compete with STT for microphone/audio resources.
+
+Required behavior:
+
+Before TTS:
+- command listening must be stopped/paused
+- release or abandon microphone/audio focus as appropriate
+
+During TTS:
+- no active microphone recognizer
+
+After TTS completes:
+- if conversation window remains active, resume command listening
+- otherwise resume wake-word detection
+
+Use the existing audio-focus architecture if present.
+
+Only introduce AudioFocus changes where actually required.
+
+Handle TTS callbacks correctly.
+
+Do not start listening before TTS has completed.
+
+==================================================
+PART 7 — NATURAL RESPONSES
+==================================================
+
+Add natural acknowledgement phrases without breaking existing action results.
+
+Before processing a command, optionally say one of:
+
+"On it."
+"Give me a sec."
+"Right away."
+"Let me handle that."
+"Sure thing."
+
+Do not add an acknowledgement if the command is so fast that it would make interaction worse.
+
+Avoid excessive robotic speech.
+
+For successful actions, use natural responses where the action already has a known result.
+
+Examples:
+
+WIFI_ON:
+"WiFi's on."
+
+WIFI_OFF:
+"WiFi's off."
+
+FLASHLIGHT_ON:
+"Flashlight on."
+
+FLASHLIGHT_OFF:
+"Light's out."
+
+VOLUME_UP:
+"Turned it up."
+
+VOLUME_DOWN:
+"Turned it down."
+
+SILENT_MODE:
+"Going silent."
+
+VIBRATE_MODE:
+"Vibrate on."
+
+NORMAL_MODE:
+"Ringer on."
+
+OPEN_APP:
+"Opening [app name]."
+
+CALL_CONTACT:
+"Calling [contact] now."
+
+SET_ALARM:
+"Alarm set."
+
+SET_TIMER:
+"Timer's running."
+
+NAVIGATE:
+"Navigation started."
+
+SCREENSHOT:
+"Got it."
+
+PLAY_MUSIC:
+"Playing."
+
+PAUSE_MUSIC:
+"Paused."
+
+NEXT_TRACK:
+"Next track."
+
+BRIGHTNESS_UP:
+"Brighter."
+
+BRIGHTNESS_DOWN:
+"Dimmed."
+
+LOCK_PHONE:
+"Locking."
+
+MODE_ACTIVATE:
+"[mode name] mode activated."
+
+Fallback:
+"Done."
+
+Unknown command examples:
+
+"Didn't catch that. Try again?"
+
+"Not sure what you mean. Say it differently?"
+
+"I missed that. What do you need?"
+
+Risky actions must continue using the EXISTING VOXYN confirmation/risk pipeline.
+
+Do not bypass confirmation merely to make conversation faster.
+
+If confirmation is required:
+
+"Just to confirm — should I [action]? Say yes."
+
+==================================================
+PART 8 — FOLLOW-UP COMMAND CONTEXT
+==================================================
+
+Conversation context must be used only where it improves intent resolution.
+
+If ClaudeIntentResolver or another LLM resolver is used for UNKNOWN/ambiguous commands, provide recent conversation context.
+
+Example:
+
+Previous:
+User: "Open YouTube"
+VOXYN: "Opening YouTube."
+
+Follow-up:
+"Play something relaxing."
+
+The resolver should have access to the recent conversation context.
+
+However:
+
+DO NOT send unnecessary conversation history to every provider.
+
+DO NOT expose private data unnecessarily.
+
+Keep context limited to recent turns.
+
+If the existing resolver already supports context, extend it rather than creating another prompt mechanism.
+
+==================================================
+PART 9 — SERVICE LIFECYCLE
+==================================================
+
+Inspect Android's current service restrictions and the existing application lifecycle.
+
+If WakeWordService is intended to be always-on:
+
+- use a foreground service where required
+- call startForeground() promptly
+- use the correct microphone foreground-service declaration
+- preserve notification channel behavior
+- handle Android version differences
+- handle service restart safely
+
+Do NOT assume START_STICKY alone guarantees continuous operation.
+
+Do NOT repeatedly start duplicate service instances.
+
+If VoiceInputService is a foreground service, preserve its existing lifecycle.
+
+If it is better implemented as part of the wake-word service architecture, make the smallest safe architectural change.
+
+The key requirement is:
+
+ONE microphone owner at a time.
+
+==================================================
+PART 10 — APPLICATION STARTUP
+==================================================
+
+Inspect VoxynApplication first.
+
+If the existing app already starts wake-word listening appropriately, preserve it.
+
+If not, make VOXYN automatically initialize its wake-word service when appropriate.
+
+Do NOT blindly start microphone services from every application launch if Android permissions, user settings, battery optimization or service state make that unsafe.
+
+Respect:
+
+- RECORD_AUDIO permission
+- user enable/disable setting if one exists
+- Android foreground-service restrictions
+- boot/startup behavior already implemented by the project
+
+If the repository has an "always listening" setting, respect it.
+
+==================================================
+PART 11 — KOIN
+==================================================
+
+Use Koin only.
+
+No Hilt.
+
+No Firebase.
+
+If ConversationSession is new:
+
+register it as a singleton.
+
+Inject it only into the classes that actually need it.
+
+Do not create service-local global singleton objects.
+
+Follow the existing Koin module structure.
+
+==================================================
+PART 12 — NOTIFICATIONS
+==================================================
+
+Preserve the existing notification architecture.
+
+Desired states where supported:
+
+IDLE:
+"VOXYN — say Hey VOXYN"
+
+LISTENING:
+"VOXYN — speak your command"
+
+PROCESSING:
+"VOXYN — Processing..."
+
+CONVERSATION:
+"VOXYN — go on, I'm listening"
+
+Do not create duplicate notification channels.
+
+Do not spam notifications.
+
+==================================================
+PART 13 — ERROR HANDLING
+==================================================
+
+Gracefully handle:
+
+- microphone permission missing
+- microphone busy
+- SpeechRecognizer unavailable
+- STT timeout
+- STT error
+- TTS error
+- Vosk model missing
+- service killed
+- service restarted
+- network failure
+- LLM provider failure
+- unknown intent
+- action execution failure
+
+On recoverable STT failure:
+
+retry appropriately.
+
+Do not create infinite retry loops.
+
+On repeated failure:
+
+return safely to wake-word detection.
+
+==================================================
+PART 14 — EXISTING AI FALLBACK
+==================================================
+
+VERY IMPORTANT:
+
+Do NOT replace VOXYN's existing AI/LLM fallback system.
+
+First inspect the actual provider chain.
+
+Preserve the current order and fallback behavior.
+
+If the repository already implements something like:
+
+Primary cloud LLM
+→ secondary cloud LLM
+→ local AI
+→ deterministic/local intent handling
+
+keep that architecture.
+
+Only modify it if required for conversational context.
+
+No provider should become mandatory for basic deterministic phone actions.
+
+For actions such as:
+
+WiFi
+flashlight
+volume
+brightness
+apps
+timer
+alarm
+etc.
+
+the existing deterministic/action pipeline should remain usable even when the LLM is unavailable.
+
+==================================================
+PART 15 — CRASH SAFETY
+==================================================
+
+The current VOXYN project has experienced app crashes.
+
+Therefore:
+
+Do NOT make the app "always listening" until lifecycle and permission handling are safe.
+
+Inspect:
+
+- service initialization
+- nullability
+- coroutine lifecycle
+- Activity/service communication
+- SpeechRecognizer lifecycle
+- Vosk lifecycle
+- TTS lifecycle
+- BroadcastReceiver lifecycle
+- AudioRecord lifecycle
+- permission state
+- foreground service startup
+
+Every resource must be released safely.
+
+No double initialization.
+
+No double destroy.
+
+No callbacks targeting destroyed objects.
+
+No microphone leaks.
+
+No TTS callbacks restarting destroyed services.
+
+No println.
+
+Use VoxynLogger.
+
+==================================================
+PART 16 — CODING RULES
+==================================================
+
+Kotlin only.
+
+Koin only.
+
+No Hilt.
+
+No Firebase.
+
+No println.
+
+Use VoxynLogger.
+
+Follow the repository's existing coding conventions.
+
+Do not introduce unnecessary libraries.
+
+Do not duplicate existing utilities.
+
+Do not rename packages.
+
+Do not change package name:
+
+com.voxyn
+
+Do not remove existing commands.
+
+Do not remove existing fallback providers.
+
+Do not remove existing risk/confirmation logic.
+
+Do not remove existing action execution.
+
+Do not replace working UI unnecessarily.
+
+==================================================
+PART 17 — BUILD VALIDATION
+==================================================
+
+After implementation:
+
+Run the appropriate Gradle build.
+
+At minimum verify:
+
+./gradlew assembleDebug
+
+Also run relevant tests if they exist.
+
+Fix compilation errors.
+
+Fix errors introduced by the implementation.
+
+Do not claim success without actually running the build.
+
+If warnings exist before your changes, distinguish:
+
+PRE-EXISTING WARNINGS
+from
+NEW WARNINGS CAUSED BY YOUR CHANGES.
+
+==================================================
+PART 18 — MANUAL TEST MATRIX
+==================================================
+
+Test:
+
+1. App launch
+2. Microphone permission
+3. Wake-word service startup
+4. "Hey VOXYN"
+5. Wake acknowledgement
+6. First command
+7. Action execution
+8. TTS response
+9. Follow-up command without wake phrase
+10. Second follow-up
+11. Third follow-up
+12. 30-second timeout
+13. "Standing by."
+14. Return to wake-word detection
+15. Unknown command
+16. STT timeout
+17. STT failure
+18. TTS failure
+19. LLM unavailable
+20. App backgrounded
+21. Screen locked
+22. Service restart
+23. Microphone permission revoked
+24. Existing deterministic commands
+25. Existing risky-action confirmation
+26. Existing AI fallback behavior
+
+==================================================
+CRITICAL SUCCESS TEST
+==================================================
+
+Without touching the phone screen after starting VOXYN:
+
+User:
+"Hey VOXYN"
+
+VOXYN:
+"Yes?"
+
+User:
+"Turn on flashlight"
+
+VOXYN:
+"Flashlight on."
+
+User:
+"Open YouTube"
+
+VOXYN:
+"Opening YouTube."
+
+User:
+"Set a 10 minute timer"
+
+VOXYN:
+"Timer's running."
+
+Wait approximately 30 seconds.
+
+VOXYN:
+"Standing by."
+
+Then:
+
+User:
+"Hey VOXYN"
+
+VOXYN:
+"Yes?"
+
+The system should start another conversation normally.
+
+==================================================
+FINAL OUTPUT
+==================================================
+
+Before editing, provide a short architecture assessment:
+
+1. Existing voice architecture
+2. Existing AI/LLM architecture
+3. Existing fallback architecture
+4. Existing service architecture
+5. Existing TTS architecture
+6. Existing settings architecture
+7. Existing conversation/context support
+8. What must actually be changed
+9. What should NOT be changed
+
+Then implement the feature.
+
+After implementation report:
+
+1. Every file changed
+2. Why each file changed
+3. New files created
+4. Existing functionality preserved
+5. Any architectural decisions made
+6. Any limitations caused by Android OS restrictions
+7. Build command executed
+8. Build result
+9. Tests executed
+10. Manual test results
+11. Any remaining issues
+
+IMPORTANT:
+
+Do not stop after creating code.
+
+The implementation is NOT complete until the project has been compiled and the actual implementation has been validated as far as the development environment allows.
+
+If something in this specification conflicts with the existing VOXYN architecture, DO NOT blindly follow the specification.
+
+Prefer the existing architecture and implement the smallest safe change that achieves the same behavior.
+
+Do not fabricate successful tests.
+
+Do not claim a feature works if it was not actually verified.

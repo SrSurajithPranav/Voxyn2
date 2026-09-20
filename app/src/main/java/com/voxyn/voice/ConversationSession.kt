@@ -14,32 +14,73 @@ class ConversationSession {
         private const val MAX_TURNS = 8
     }
 
-    val turns = mutableListOf<ConversationTurn>()
-    var isActive = false
-    var lastInteractionTime = 0L
+    private val lock = Any()
+    private val storedTurns = mutableListOf<ConversationTurn>()
+    private var active = false
+    private var lastInteraction = 0L
+
+    /** A snapshot prevents callers from mutating session state outside this class. */
+    val turns: List<ConversationTurn>
+        get() = synchronized(lock) { storedTurns.toList() }
+
+    val isActive: Boolean
+        get() = synchronized(lock) { active }
+
+    val lastInteractionTime: Long
+        get() = synchronized(lock) { lastInteraction }
+
     val windowMs = 30_000L
 
-    fun isWithinWindow(): Boolean = isActive && System.currentTimeMillis() - lastInteractionTime < windowMs
+    fun isWithinWindow(): Boolean = synchronized(lock) {
+        active && System.currentTimeMillis() - lastInteraction < windowMs
+    }
 
     fun addTurn(turn: ConversationTurn) {
-        turns.add(turn)
-        while (turns.size > MAX_TURNS) turns.removeAt(0)
-        lastInteractionTime = System.currentTimeMillis()
-        isActive = true
+        synchronized(lock) {
+            storedTurns.add(turn)
+            while (storedTurns.size > MAX_TURNS) storedTurns.removeAt(0)
+        }
+    }
+
+    /**
+     * Keeps a pending confirmation/clarification inside the current conversation
+     * without adding a synthetic turn or reviving an expired session implicitly.
+     */
+    fun activate() {
+        synchronized(lock) {
+            active = true
+            lastInteraction = System.currentTimeMillis()
+        }
     }
 
     fun updateLastTurn(action: String, response: String, params: Map<String, String> = emptyMap()) {
-        val last = turns.lastOrNull() ?: return
-        val idx = turns.size - 1
-        turns[idx] = ConversationTurn(last.userInput, action, response, params.ifEmpty { last.params }, last.timestamp)
+        synchronized(lock) {
+            val last = storedTurns.lastOrNull() ?: return
+            val idx = storedTurns.size - 1
+            storedTurns[idx] = ConversationTurn(
+                last.userInput,
+                action,
+                response,
+                params.ifEmpty { last.params },
+                last.timestamp
+            )
+            active = true
+            lastInteraction = System.currentTimeMillis()
+        }
     }
 
-    fun getContext(): String = turns.takeLast(3).joinToString("\n") { "User: ${it.userInput}\nVOXYN: ${it.response}" }
+    fun getContext(): String = synchronized(lock) {
+        storedTurns.takeLast(3)
+            .joinToString("\n") { "User: ${it.userInput}\nVOXYN: ${it.response}" }
+    }
 
     fun end() {
-        isActive = false
-        turns.clear()
+        synchronized(lock) {
+            active = false
+            lastInteraction = 0L
+            storedTurns.clear()
+        }
     }
 
-    fun lastTurn(): ConversationTurn? = turns.lastOrNull()
+    fun lastTurn(): ConversationTurn? = synchronized(lock) { storedTurns.lastOrNull() }
 }

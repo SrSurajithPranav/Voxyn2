@@ -62,7 +62,6 @@ class WakeWordService : Service() {
         private const val GRAMMAR = """["hey voxyn", "hi voxyn", "okay voxyn", "voxyn", "[unk]"]"""
 
         private val WAKE_VARIANTS = listOf("hey voxyn", "hi voxyn", "okay voxyn", "voxyn")
-        private val WAKE_TRIGGER_WORDS = listOf("hey", "hi", "okay", "voxyn")
         private val ACTIVATION_RESPONSES = listOf("Yes?", "Listening.", "What do you need?", "Go ahead.", "I'm here.")
     }
 
@@ -236,8 +235,11 @@ class WakeWordService : Service() {
      * vocabulary speech. Any result containing a trigger word is a wake attempt.
      */
     private fun isWakeTrigger(text: String): Boolean {
-        if (WAKE_VARIANTS.any { text.contains(it) }) return true
-        return WAKE_TRIGGER_WORDS.any { text.contains(it) }
+        // A standalone "hey", "hi", or "okay" is ordinary speech and should
+        // not steal the microphone.  "voxyn" alone is accepted for convenience;
+        // the other accepted forms must contain the assistant name.
+        val normalized = text.trim().lowercase().replace(Regex("\\s+"), " ")
+        return normalized == "voxyn" || WAKE_VARIANTS.any { normalized.contains(it) }
     }
 
     private fun onDetectionFailed() {
@@ -263,15 +265,22 @@ class WakeWordService : Service() {
         requestAudioFocus()
         val phrase = ACTIVATION_RESPONSES.random()
         VoxynLogger.i("Activation: \"$phrase\"", "WAKE")
-        tts.speak(phrase)
-        scope.launch {
-            val deadline = System.currentTimeMillis() + TTS_MAX_WAIT_MS
-            while (System.currentTimeMillis() < deadline && tts.isSpeaking()) {
-                delay(100L)
-            }
+        var listeningStarted = false
+
+        fun startAfterActivation() {
+            if (listeningStarted || stopped) return
+            listeningStarted = true
             releaseAudioFocus()
             startVoiceInput()
         }
+
+        // TextToSpeechManager posts completion on the main thread.  This avoids
+        // opening a second microphone consumer while the acknowledgement is still
+        // being spoken.
+        tts.speak(phrase) { startAfterActivation() }
+
+        // A broken TTS engine must not leave the assistant stuck forever.
+        mainHandler.postDelayed({ startAfterActivation() }, TTS_MAX_WAIT_MS)
     }
 
     private fun startVoiceInput() {

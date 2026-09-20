@@ -106,6 +106,9 @@ class TextToSpeechManager(context: Context) {
         if (!isReady) {
             pendingSpeech = text
             pendingCallback = onComplete
+            // Treat queued speech as busy so a caller does not open the
+            // microphone before TextToSpeech finishes initializing.
+            isCurrentlySpeaking.set(true)
             VoxynLogger.d("TTS not ready; response queued", "TTS")
             return
         }
@@ -128,6 +131,9 @@ class TextToSpeechManager(context: Context) {
         completeCallbacks()
         val utteranceId = "voxyn_${utteranceSequence.incrementAndGet()}"
         activeUtteranceId.set(utteranceId)
+        // Mark busy before calling into the platform.  onStart can arrive later
+        // on another thread, and callers must not race that callback.
+        isCurrentlySpeaking.set(true)
         if (onComplete != null) {
             callbacks[utteranceId] = onComplete
         }

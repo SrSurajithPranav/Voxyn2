@@ -30,4 +30,27 @@ class ConversationSessionTest {
         assertFalse(session.isActive)
         assertEquals("", session.getContext())
     }
+
+    @Test
+    fun `adding a pending turn does not revive an ended session`() {
+        val session = ConversationSession()
+
+        session.end()
+        session.addTurn(ConversationTurn("turn on the light", "", ""))
+
+        assertFalse(session.isActive)
+        assertFalse(session.isWithinWindow())
+    }
+
+    @Test
+    fun `updating the completed turn activates the conversation window`() {
+        val session = ConversationSession()
+        session.addTurn(ConversationTurn("turn on the light", "", ""))
+
+        session.updateLastTurn("FLASHLIGHT_ON", "Flashlight on.")
+
+        assertTrue(session.isActive)
+        assertTrue(session.isWithinWindow())
+        assertEquals("FLASHLIGHT_ON", session.lastTurn()?.action)
+    }
 }
