@@ -50,6 +50,11 @@ class TextToSpeechManager(context: Context) {
                 }
             } else {
                 VoxynLogger.e("TTS init failed: $status", tag = "TTS")
+                isCurrentlySpeaking.set(false)
+                pendingSpeech = null
+                val pending = pendingCallback
+                pendingCallback = null
+                pending?.let { mainHandler.post(it) }
                 completeCallbacks()
             }
         }
@@ -104,6 +109,9 @@ class TextToSpeechManager(context: Context) {
             return
         }
         if (!isReady) {
+            // Replacing queued speech must not strand the previous caller,
+            // especially a service handoff waiting for completion.
+            pendingCallback?.let { mainHandler.post(it) }
             pendingSpeech = text
             pendingCallback = onComplete
             // Treat queued speech as busy so a caller does not open the
@@ -144,6 +152,9 @@ class TextToSpeechManager(context: Context) {
     fun isSpeaking(): Boolean = isCurrentlySpeaking.get() || (tts?.isSpeaking == true)
 
     fun stop() {
+        pendingSpeech = null
+        pendingCallback?.let { mainHandler.post(it) }
+        pendingCallback = null
         completeCallbacks()
         activeUtteranceId.set(null)
         isCurrentlySpeaking.set(false)

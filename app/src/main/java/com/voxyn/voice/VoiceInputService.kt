@@ -52,6 +52,7 @@ class VoiceInputService : Service() {
         private const val FIRST_COMMAND_MAX_ATTEMPTS = 2
         private const val MAX_CONSECUTIVE_FAILURES   = 2
         private const val PIPELINE_MAX_WAIT_MS    = 60_000L
+        private const val TTS_FAILURE_MAX_WAIT_MS = 5_000L
     }
 
     private val scope       = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -87,6 +88,13 @@ class VoiceInputService : Service() {
                 mainHandler.postDelayed({ beginListening() }, START_DELAY_MS)
             }
             ACTION_STOP_LISTENING -> resumeWakeAndStop()
+            null -> {
+                // START_STICKY restarts can arrive without the original intent.
+                // The wake service is the only safe owner to restore after an
+                // unexpected command-service restart.
+                VoxynLogger.w("VoiceInputService restarted without an action — returning to wake detection", "VOICE")
+                mainHandler.post { resumeWakeAndStop() }
+            }
         }
         return START_STICKY
     }
@@ -119,21 +127,45 @@ class VoiceInputService : Service() {
             maybeDownloadAsrModel()
         }
 
-        val recognizerEngine = engineProvider.currentEngine()
+        val recognizerEngine = runCatching { engineProvider.currentEngine() }.getOrElse { error ->
+            handleRecognizerStartFailure(error.message ?: "Speech engine unavailable")
+            return
+        }
         activeEngine = recognizerEngine
-        if (!recognizerEngine.start(engineListener)) {
-            mainHandler.post {
-                if (stopping) return@post
-                isListening = false
-                activeEngine = null
-                releaseAudioFocus()
-                updateNotification("VOXYN — voice unavailable")
-                tts.speak("My speech engine is not ready yet.")
-                mainHandler.postDelayed({ resumeWakeAndStop() }, 1_500L)
+        val started = runCatching { recognizerEngine.start(engineListener) }
+            .getOrElse { error ->
+                VoxynLogger.e("Speech engine start failed: ${error.message}", tag = "VOICE")
+                false
             }
+        if (!started) {
+            handleRecognizerStartFailure("Speech engine is not ready")
             return
         }
         VoxynLogger.i("Command listening started (${recognizerEngine::class.simpleName})", "VOICE")
+    }
+
+    private fun handleRecognizerStartFailure(reason: String) {
+        mainHandler.post {
+            if (stopping) return@post
+            isListening = false
+            activeEngine?.stop()
+            activeEngine = null
+            releaseAudioFocus()
+            updateNotification("VOXYN — voice unavailable")
+            VoxynLogger.w("Returning to wake detection after recognizer failure: $reason", "VOICE")
+
+            var resumed = false
+            fun resumeOnce() {
+                if (resumed) return
+                resumed = true
+                resumeWakeAndStop()
+            }
+
+            // Do not let the wake recognizer compete with this spoken failure
+            // message. The timeout is only a guard for a broken TTS engine.
+            tts.speak("My speech engine is not ready yet.", ::resumeOnce)
+            mainHandler.postDelayed({ resumeOnce() }, TTS_FAILURE_MAX_WAIT_MS)
+        }
     }
 
     private val engineListener = object : SpeechRecognizerEngine.Listener {
