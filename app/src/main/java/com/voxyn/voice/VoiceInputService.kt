@@ -26,6 +26,31 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
+internal class VoiceInputRecovery {
+    private var resumed = false
+
+    fun resumeOnce(resume: () -> Unit): Boolean {
+        if (resumed) return false
+        resumed = true
+        resume()
+        return true
+    }
+}
+
+internal fun shouldResumeWakeAfterRestart(action: String?): Boolean = action == null
+
+internal enum class ConversationContinuation {
+    FOLLOW_UP_LISTENING,
+    STANDING_BY
+}
+
+internal fun conversationContinuation(session: ConversationSession): ConversationContinuation =
+    if (session.isWithinWindow()) {
+        ConversationContinuation.FOLLOW_UP_LISTENING
+    } else {
+        ConversationContinuation.STANDING_BY
+    }
+
 /**
  * VoiceInputService — listens for a spoken command through the active
  * SpeechRecognizerEngine (sherpa-onnx/Parakeet, with Vosk as a fallback) and
@@ -93,7 +118,9 @@ class VoiceInputService : Service() {
                 // The wake service is the only safe owner to restore after an
                 // unexpected command-service restart.
                 VoxynLogger.w("VoiceInputService restarted without an action — returning to wake detection", "VOICE")
-                mainHandler.post { resumeWakeAndStop() }
+                if (shouldResumeWakeAfterRestart(intent?.action)) {
+                    mainHandler.post { resumeWakeAndStop() }
+                }
             }
         }
         return START_STICKY
@@ -154,11 +181,9 @@ class VoiceInputService : Service() {
             updateNotification("VOXYN — voice unavailable")
             VoxynLogger.w("Returning to wake detection after recognizer failure: $reason", "VOICE")
 
-            var resumed = false
+            val recovery = VoiceInputRecovery()
             fun resumeOnce() {
-                if (resumed) return
-                resumed = true
-                resumeWakeAndStop()
+                recovery.resumeOnce(::resumeWakeAndStop)
             }
 
             // Do not let the wake recognizer compete with this spoken failure
@@ -245,7 +270,7 @@ class VoiceInputService : Service() {
             }
             mainHandler.post {
                 if (stopping) return@post
-                if (session.isWithinWindow()) {
+                if (conversationContinuation(session) == ConversationContinuation.FOLLOW_UP_LISTENING) {
                     VoxynLogger.i("Conversation window open — listening for follow-up", "VOICE")
                     updateNotification("VOXYN — go on, I'm listening")
                     startWindowWatchdog()
@@ -267,7 +292,7 @@ class VoiceInputService : Service() {
             // First listen after the wake phrase — retry once before returning to IDLE
             // so a slow start or a VAD hiccup doesn't end the conversation prematurely.
             retryOrGiveUp(reason, REARM_DELAY_MS)
-        } else if (session.isWithinWindow()) {
+        } else if (conversationContinuation(session) == ConversationContinuation.FOLLOW_UP_LISTENING) {
             // Follow-up listen: re-arm once; the second consecutive failure ends the session
             retryOrGiveUp(reason, REARM_DELAY_MS)
         } else {

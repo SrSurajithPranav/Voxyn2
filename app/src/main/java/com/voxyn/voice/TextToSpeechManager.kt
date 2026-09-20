@@ -13,6 +13,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+internal enum class TtsCompletionReason {
+    COMPLETED,
+    FAILED,
+    STOPPED
+}
+
+internal class TtsCompletionGate(private val callback: () -> Unit) {
+    private val completed = AtomicBoolean(false)
+    @Volatile
+    var completionReason: TtsCompletionReason? = null
+        private set
+
+    fun complete(reason: TtsCompletionReason = TtsCompletionReason.COMPLETED) {
+        if (completed.compareAndSet(false, true)) {
+            completionReason = reason
+            callback()
+        }
+    }
+}
+
 /**
  * TextToSpeechManager — robust TTS playback with reliable completion callbacks
  * and single-speaker enforcement.
@@ -29,7 +49,7 @@ class TextToSpeechManager(context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val isCurrentlySpeaking = AtomicBoolean(false)
-    private val callbacks = ConcurrentHashMap<String, () -> Unit>()
+    private val callbacks = ConcurrentHashMap<String, TtsCompletionGate>()
     private val utteranceSequence = AtomicLong()
     private val activeUtteranceId = AtomicReference<String?>(null)
 
@@ -74,7 +94,11 @@ class TextToSpeechManager(context: Context) {
                 VoxynLogger.d("TTS completed: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
-                    cb?.let { mainHandler.post(it) }
+                    cb?.let {
+                        mainHandler.post {
+                            it.complete(TtsCompletionReason.COMPLETED)
+                        }
+                    }
                 }
             }
 
@@ -86,7 +110,11 @@ class TextToSpeechManager(context: Context) {
                 VoxynLogger.w("TTS error on: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
-                    cb?.let { mainHandler.post(it) }
+                    cb?.let {
+                        mainHandler.post {
+                            it.complete(TtsCompletionReason.FAILED)
+                        }
+                    }
                 }
             }
 
@@ -97,7 +125,11 @@ class TextToSpeechManager(context: Context) {
                 VoxynLogger.w("TTS error ($errorCode) on: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
-                    cb?.let { mainHandler.post(it) }
+                    cb?.let {
+                        mainHandler.post {
+                            it.complete(TtsCompletionReason.FAILED)
+                        }
+                    }
                 }
             }
         })
@@ -143,7 +175,7 @@ class TextToSpeechManager(context: Context) {
         // on another thread, and callers must not race that callback.
         isCurrentlySpeaking.set(true)
         if (onComplete != null) {
-            callbacks[utteranceId] = onComplete
+            callbacks[utteranceId] = TtsCompletionGate(onComplete)
         }
         VoxynLogger.i("TTS: \"$text\"", "TTS")
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -173,6 +205,10 @@ class TextToSpeechManager(context: Context) {
     private fun completeCallbacks() {
         val pending = callbacks.values.toList()
         callbacks.clear()
-        pending.forEach { callback -> mainHandler.post(callback) }
+        pending.forEach { callback ->
+            mainHandler.post {
+                callback.complete(TtsCompletionReason.STOPPED)
+            }
+        }
     }
 }

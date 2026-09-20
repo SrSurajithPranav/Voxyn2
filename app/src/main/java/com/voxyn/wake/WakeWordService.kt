@@ -36,6 +36,29 @@ import org.koin.android.ext.android.inject
 import org.vosk.Model
 import org.vosk.Recognizer
 
+internal class WakeWordHandoff {
+    private var commandListeningStarted = false
+
+    fun startAfterAcknowledgement(stopped: Boolean, start: () -> Unit): Boolean {
+        if (stopped || commandListeningStarted) return false
+        commandListeningStarted = true
+        start()
+        return true
+    }
+}
+
+internal enum class WakeDetectionOutcome {
+    RETRY,
+    MICROPHONE_PERMISSION_REQUIRED
+}
+
+internal fun wakeDetectionOutcome(error: Throwable): WakeDetectionOutcome =
+    if (error is SecurityException) {
+        WakeDetectionOutcome.MICROPHONE_PERMISSION_REQUIRED
+    } else {
+        WakeDetectionOutcome.RETRY
+    }
+
 /**
  * WakeWordService — always-on microphone foreground service.
  *
@@ -213,10 +236,12 @@ class WakeWordService : Service() {
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 VoxynLogger.i("Vosk detection cancelled", "WAKE")
-            } catch (se: SecurityException) {
-                permissionBlocked = true
-                VoxynLogger.e("Microphone permission missing — wake word disabled", tag = "WAKE")
-                updateNotification("VOXYN — microphone permission needed. Open the app and allow it.")
+            } catch (e: SecurityException) {
+                if (wakeDetectionOutcome(e) == WakeDetectionOutcome.MICROPHONE_PERMISSION_REQUIRED) {
+                    permissionBlocked = true
+                    VoxynLogger.e("Microphone permission missing — wake word disabled", tag = "WAKE")
+                    updateNotification("VOXYN — microphone permission needed. Open the app and allow it.")
+                }
             } catch (e: Exception) {
                 VoxynLogger.e("Vosk detection loop failed: ${e.message}", tag = "WAKE")
                 onDetectionFailed()
@@ -265,13 +290,13 @@ class WakeWordService : Service() {
         requestAudioFocus()
         val phrase = ACTIVATION_RESPONSES.random()
         VoxynLogger.i("Activation: \"$phrase\"", "WAKE")
-        var listeningStarted = false
+        val handoff = WakeWordHandoff()
 
         fun startAfterActivation() {
-            if (listeningStarted || stopped) return
-            listeningStarted = true
-            releaseAudioFocus()
-            startVoiceInput()
+            handoff.startAfterAcknowledgement(stopped) {
+                releaseAudioFocus()
+                startVoiceInput()
+            }
         }
 
         // TextToSpeechManager posts completion on the main thread.  This avoids

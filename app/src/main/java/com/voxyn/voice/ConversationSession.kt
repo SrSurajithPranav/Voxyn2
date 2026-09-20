@@ -8,7 +8,9 @@ data class ConversationTurn(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-class ConversationSession {
+class ConversationSession(
+    private val clock: () -> Long = System::currentTimeMillis
+) {
     companion object {
         /** Keeps a long follow-up exchange from becoming an unbounded in-memory log. */
         private const val MAX_TURNS = 8
@@ -32,7 +34,7 @@ class ConversationSession {
     val windowMs = 30_000L
 
     fun isWithinWindow(): Boolean = synchronized(lock) {
-        active && System.currentTimeMillis() - lastInteraction < windowMs
+        active && clock() - lastInteraction < windowMs
     }
 
     fun addTurn(turn: ConversationTurn) {
@@ -49,7 +51,7 @@ class ConversationSession {
     fun activate() {
         synchronized(lock) {
             active = true
-            lastInteraction = System.currentTimeMillis()
+            lastInteraction = clock()
         }
     }
 
@@ -65,7 +67,7 @@ class ConversationSession {
                 last.timestamp
             )
             active = true
-            lastInteraction = System.currentTimeMillis()
+            lastInteraction = clock()
         }
     }
 
