@@ -1,5 +1,8 @@
-modules = ["java-graalvm22.3"]
+modules = ["nodejs-20", "bash"]
 
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 180000
+
+[nix]
+channel = "stable-25_05"
