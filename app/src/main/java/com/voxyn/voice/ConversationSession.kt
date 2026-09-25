@@ -33,8 +33,17 @@ class ConversationSession(
 
     val windowMs = 30_000L
 
-    fun isWithinWindow(): Boolean = synchronized(lock) {
-        active && clock() - lastInteraction < windowMs
+    fun isWithinWindow(): Boolean = remainingMs() > 0L
+
+    fun remainingMs(): Long = synchronized(lock) {
+        if (!active) return@synchronized 0L
+        (windowMs - (clock() - lastInteraction)).coerceAtLeast(0L)
+    }
+
+    fun touch() {
+        synchronized(lock) {
+            if (active) lastInteraction = clock()
+        }
     }
 
     fun addTurn(turn: ConversationTurn) {
