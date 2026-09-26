@@ -68,6 +68,7 @@ val appModule = module {
     // ─── Voice & TTS ───────────────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
     single { ConversationSession() }
+    single { com.voxyn.voice.MicrophoneArbiter() }
     single { VoskModelProvider(androidContext()) }
     single { ParakeetModelManager(androidContext()) }
     single { SpeechRecognizerEngineProvider(androidContext(), get(), get(), get()) }

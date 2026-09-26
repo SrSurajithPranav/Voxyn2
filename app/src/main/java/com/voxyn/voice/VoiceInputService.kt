@@ -87,6 +87,7 @@ class VoiceInputService : Service() {
     private val tts: TextToSpeechManager by inject()
     private val engineProvider: SpeechRecognizerEngineProvider by inject()
     private val parakeetModelManager: ParakeetModelManager by inject()
+    private val microphoneArbiter: MicrophoneArbiter by inject()
 
     private var activeEngine      : SpeechRecognizerEngine? = null
     private var audioManager      : AudioManager? = null
@@ -133,6 +134,7 @@ class VoiceInputService : Service() {
         cancelWatchdog()
         activeEngine?.stop()
         activeEngine = null
+        microphoneArbiter.release(MicrophoneArbiter.Owner.COMMAND)
         releaseAudioFocus()
         scope.cancel()
         VoxynLogger.i("VoiceInputService destroyed", "VOICE")
@@ -143,6 +145,11 @@ class VoiceInputService : Service() {
 
     private fun beginListening() {
         if (stopping || isListening) return
+        if (!microphoneArbiter.acquire(MicrophoneArbiter.Owner.COMMAND)) {
+            VoxynLogger.w("Command microphone is busy; retrying", "VOICE")
+            mainHandler.postDelayed({ if (!stopping) beginListening() }, REARM_DELAY_MS)
+            return
+        }
         isListening = true
         updateNotification("VOXYN — speak your command")
 
@@ -252,6 +259,7 @@ class VoiceInputService : Service() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
+        microphoneArbiter.release(MicrophoneArbiter.Owner.COMMAND)
         cancelWatchdog()
         consecutiveFailures = 0
         updateNotification("Processing...")
@@ -288,6 +296,7 @@ class VoiceInputService : Service() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
+        microphoneArbiter.release(MicrophoneArbiter.Owner.COMMAND)
         if (session.turns.isEmpty()) {
             // First listen after the wake phrase — retry once before returning to IDLE
             // so a slow start or a VAD hiccup doesn't end the conversation prematurely.

@@ -94,6 +94,7 @@ class WakeWordService : Service() {
     private val session: ConversationSession by inject()
     private val modelProvider: VoskModelProvider by inject()
     private val parakeetModelManager: ParakeetModelManager by inject()
+    private val microphoneArbiter: MicrophoneArbiter by inject()
 
     private var model        : Model? = null
     private var recognizer   : Recognizer? = null
@@ -179,6 +180,7 @@ class WakeWordService : Service() {
     private fun startDetection() {
         val m = model ?: return
         if (stopped || isDetecting || session.isActive) return
+        if (!microphoneArbiter.acquire(MicrophoneArbiter.Owner.WAKE)) return
         permissionBlocked = false
         isDetecting = true
         updateNotification("VOXYN — say Hey VOXYN")
@@ -228,6 +230,7 @@ class WakeWordService : Service() {
                             VoxynLogger.i("Wake phrase detected — waking up", "WAKE")
                             isDetecting = false
                             releaseAudioRecord()
+                            microphoneArbiter.release(MicrophoneArbiter.Owner.WAKE)
                             mainHandler.post { onWakeTriggered() }
                             return@launch
                         }
@@ -247,6 +250,7 @@ class WakeWordService : Service() {
                 onDetectionFailed()
             } finally {
                 releaseAudioRecord()
+                microphoneArbiter.release(MicrophoneArbiter.Owner.WAKE)
                 try { recognizer?.close() } catch (_: Exception) {}
                 recognizer = null
                 if (isDetecting) isDetecting = false
@@ -326,6 +330,7 @@ class WakeWordService : Service() {
         isDetecting = false
         detectJob?.cancel()
         releaseAudioRecord()
+        microphoneArbiter.release(MicrophoneArbiter.Owner.WAKE)
         try { recognizer?.close() } catch (_: Exception) {}
         recognizer = null
         VoxynLogger.i("Vosk detection stopped", "WAKE")
