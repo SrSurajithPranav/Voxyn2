@@ -1,2 +1,1 @@
 - [Post-merge setup hook](post-merge-hook.md) — task merges require a configured `.replit` postMerge path and a runnable root-relative script.
-- [Android test environment](android-test-environment.md) — Android unit validation requires an SDK-enabled workspace; this checkout may lack ANDROID_HOME and local.properties.

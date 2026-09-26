@@ -1,0 +1,1134 @@
+You are working on the existing VOXYN Android/Kotlin project.
+
+IMPORTANT: DO NOT START CODING YET.
+
+First inspect the entire repository and understand the current implementation. This is an existing project, NOT a greenfield project. Do not rewrite, replace, or redesign existing architecture just to satisfy this request.
+
+Your job is to implement the following work incrementally and safely.
+
+==================================================
+CORE RULES
+==================================================
+
+1. Repository code is authoritative.
+2. Inspect existing implementations before creating anything new.
+3. Reuse existing classes/services/managers whenever possible.
+4. Do not create duplicate implementations of existing functionality.
+5. Do not rewrite the AI/LLM architecture.
+6. Do not rewrite the existing fallback architecture.
+7. Do not replace the existing Vosk wake-word implementation.
+8. Do not replace the existing STT implementation.
+9. Do not replace ExecutionController, IntentRouter, CapabilityRegistry, or the existing risk/confirmation system.
+10. Preserve Koin.
+11. No Hilt.
+12. No Firebase.
+13. No println.
+14. Use the project's existing logging system.
+15. Do not introduce unnecessary dependencies.
+16. Do not modify unrelated functionality.
+17. Do not invent APIs.
+18. Do not invent VoiceStudio endpoints or request/response formats.
+19. Do not claim something is tested unless you actually ran the test.
+20. If something requires a physical Android device, explicitly mark it DEVICE-ONLY / UNTESTED until it is actually tested.
+21. Do not perform all phases as one giant rewrite. Each phase must be independently reviewable.
+22. If an instruction below conflicts with the actual repository architecture, adapt to the repository instead of blindly rewriting the project.
+
+==================================================
+EXISTING VOXYN PIPELINE
+==================================================
+
+Preserve the existing architecture:
+
+INPUT
+→ PERCEPTION
+→ INTENT
+→ CONFIDENCE
+→ RISK
+→ DECISION
+→ PLAN
+→ EXECUTE
+→ VERIFY
+→ LEARN
+
+The existing AI/LLM fallback architecture must remain intact.
+
+Deterministic phone actions must NOT become dependent on an external LLM.
+
+==================================================
+PHASE 0 — BASELINE
+==================================================
+
+Before modifying application source code:
+
+1. Inspect the repository.
+2. Identify the existing voice pipeline.
+3. Identify the existing AI/LLM pipeline.
+4. Identify the existing execution pipeline.
+5. Identify the existing TTS implementation.
+6. Identify the existing Koin modules.
+7. Identify the existing settings architecture.
+8. Identify any existing conversation/session abstraction.
+9. Identify any existing microphone ownership/resource management.
+10. Identify any existing voice/profile abstraction.
+
+Then run the appropriate baseline commands:
+
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew assembleDebug
+
+If the project uses a different Gradle setup, determine the correct equivalent commands.
+
+Record:
+
+BASELINE
+- Unit tests:
+- Lint:
+- Debug build:
+- Existing failures:
+- Existing warnings:
+- Existing relevant architecture:
+
+Do NOT fix unrelated baseline failures during Phase 0.
+
+STOP after the baseline and report the results before making application-source changes.
+
+==================================================
+PHASE 1 — MICROPHONE OWNERSHIP
+==================================================
+
+After P0 succeeds or existing failures are clearly documented, implement microphone ownership safely.
+
+Create a small Koin-managed MicrophoneArbiter ONLY if the repository does not already have an equivalent abstraction.
+
+Conceptually:
+
+NONE
+WAKE
+COMMAND
+
+Only one microphone owner may exist at a time.
+
+The arbiter should support equivalent operations for:
+
+acquire(owner)
+release(owner)
+currentOwner
+
+Do not duplicate an existing ownership mechanism if one already exists.
+
+Use a bounded lease for COMMAND ownership.
+
+Recommended lease:
+
+approximately 90 seconds
+
+Reason:
+
+30-second conversation window
++
+possible execution/pipeline time
+
+The lease is a safety mechanism only. It is NOT the conversation timer.
+
+IMPORTANT:
+
+Do not use ConversationSession.isActive as a substitute for microphone ownership.
+
+==================================================
+PHASE 1A — WAKE WORD SERVICE
+==================================================
+
+Inspect WakeWordService before modifying it.
+
+Preserve the existing Vosk implementation.
+
+Do NOT replace Vosk.
+
+At wake detection, ownership must transition safely:
+
+WAKE owns microphone
+→ wake phrase detected
+→ COMMAND ownership acquired
+→ wake microphone released
+→ acknowledgement
+→ VoiceInputService
+
+The transition to COMMAND ownership must happen at wake time.
+
+Prevent duplicate microphone consumers caused by:
+
+- ACTION_START
+- Activity resume
+- wake retry
+- recognizer restart
+- service restart
+- RESUME
+- stale conversation state
+
+WakeWordService must consult the microphone arbiter rather than using only ConversationSession.isActive.
+
+==================================================
+PHASE 1B — VOSK RESOURCE OWNERSHIP
+==================================================
+
+Inspect the current Vosk Recognizer lifecycle.
+
+Avoid closing the same native recognizer concurrently from multiple threads.
+
+Preferred model:
+
+recognition loop
+→ cancellation requested
+→ loop exits
+→ finally
+→ recognizer closed exactly once
+
+Do not blindly close the native recognizer from stopDetection() while acceptWaveForm() may still be executing.
+
+If joining the recognition thread is necessary, do it safely and do not block the main/UI thread unnecessarily.
+
+This race MUST be considered DEVICE-ONLY until reproduced/fixed on a real device.
+
+==================================================
+PHASE 1C — VOICE INPUT SERVICE
+==================================================
+
+Preserve the existing STT/provider architecture.
+
+VoiceInputService must:
+
+- acquire COMMAND ownership before listening
+- release ownership on success
+- release ownership on failure
+- release ownership on timeout
+- release ownership on cancellation
+- release ownership in finally
+- release ownership in onDestroy
+- release ownership during RESUME/termination paths
+
+There must never be two simultaneous microphone consumers.
+
+==================================================
+PHASE 1D — CONVERSATION SESSION
+==================================================
+
+The existing ConversationSession implementation is considered fundamentally correct.
+
+Do NOT rewrite it.
+
+Add only the minimum required API if it does not already exist:
+
+touch()
+remainingMs()
+
+Preserve existing APIs and tests.
+
+The conversation window must be a real deadline.
+
+Target:
+
+30 seconds after the latest real interaction.
+
+NOT:
+
+30 seconds per recognizer attempt.
+
+==================================================
+FIRST COMMAND GRACE
+==================================================
+
+After the wake acknowledgement, provide a first-command grace deadline.
+
+Default:
+
+15 seconds.
+
+This must be a real deadline.
+
+==================================================
+SILENCE VS ERROR
+==================================================
+
+NO_SPEECH must NOT automatically terminate the conversation.
+
+While the conversation deadline remains active:
+
+NO_SPEECH
+→ re-arm listening
+
+Recognizer ERROR may have a separate consecutive-error limit.
+
+Default:
+
+3 consecutive recognizer errors.
+
+Do not treat ordinary silence as a failed attempt that consumes the entire conversation window.
+
+==================================================
+SESSION DEADLINE TOUCHING
+==================================================
+
+Touch the conversation session when:
+
+1. A user speech result is actually accepted.
+2. TTS response actually completes.
+
+Do NOT touch when:
+
+- recognizer starts
+- silence occurs
+- recognizer errors
+- TTS starts
+
+This prevents long TTS responses from incorrectly consuming the conversation window.
+
+==================================================
+CONVERSATION EXPIRY
+==================================================
+
+When:
+
+remainingMs() <= 0
+
+perform:
+
+1. Stop recognizer.
+2. Release COMMAND microphone ownership.
+3. Speak:
+   "Standing by."
+4. Resume wake detection.
+
+Do not create a new 30-second window after every listening attempt.
+
+==================================================
+FAILED COMMANDS
+==================================================
+
+Failed or rejected commands should count as conversation turns.
+
+They should NOT automatically terminate the conversation.
+
+Risk rejection should normally keep the conversation open.
+
+Only explicit interruption/termination or actual conversation expiry should end the session.
+
+==================================================
+PHASE 1E — TTS FACADE
+==================================================
+
+Inspect the existing TextToSpeechManager.
+
+Current behavior is effectively:
+
+speak() = REPLACE
+
+Preserve REPLACE as the default behavior for existing callers.
+
+Add an explicit:
+
+SpeechMode.APPEND
+
+ONLY if no equivalent already exists.
+
+Conceptually:
+
+REPLACE
+APPEND
+
+REPLACE remains the default.
+
+APPEND must track individual queued utterances correctly.
+
+Do not fake APPEND by repeatedly calling REPLACE.
+
+==================================================
+ACKNOWLEDGEMENT SPEECH
+==================================================
+
+Do not always speak:
+
+"On it."
+
+Only provide a progress acknowledgement if execution takes longer than approximately:
+
+400 ms
+
+If acknowledgement is spoken:
+
+acknowledgement
+→ APPEND
+→ final result
+
+The final result must not clip the acknowledgement.
+
+==================================================
+MODE ENGINE
+==================================================
+
+Inspect ModeEngine.
+
+ModeEngine must not independently compete with VoxynEngine for final speech.
+
+There should be one clear owner of final user-facing speech.
+
+ModeEngine must report only what it actually does.
+
+Do not claim DND, vibrate, silencing, etc. unless the code actually performs those operations.
+
+==================================================
+PHASE 1 ACCEPTANCE
+==================================================
+
+Run relevant JVM tests and build checks.
+
+Verify:
+
+- microphone ownership
+- wake → command transition
+- conversation deadline
+- first-command grace
+- NO_SPEECH behavior
+- ERROR cap
+- TTS completion touch
+- conversation expiry
+- failed-turn behavior
+- TTS REPLACE
+- TTS APPEND
+- acknowledgement behavior
+- ModeEngine speech ownership
+
+Do not proceed to Phase 2 if Phase 1 introduces compilation or test failures.
+
+Report:
+
+P1 RESULT
+- Files added:
+- Files modified:
+- Files removed:
+- Tests run:
+- Tests passed:
+- Tests failed:
+- Build result:
+- Device-only items:
+- Untested items:
+
+==================================================
+PHASE 2 — REAL EXECUTION VERIFICATION
+==================================================
+
+The current production path has this fundamental issue:
+
+executor.execute(step)
+→ returned result is logged
+→ result is discarded
+→ verify(plan)
+→ Success
+
+Fix this without redesigning the execution architecture.
+
+==================================================
+EXECUTION REPORT
+==================================================
+
+Create an engine-private/runtime ExecutionReport ONLY if no equivalent already exists.
+
+It should retain per-step execution information such as:
+
+- step
+- executeResult
+- verificationOutcome
+
+Do NOT modify ExecutionPlan merely to store runtime results unless absolutely necessary.
+
+==================================================
+executePlan()
+==================================================
+
+Capture the actual result returned by:
+
+executor.execute(step)
+
+Make it available to verification.
+
+Do not merely log it and discard it.
+
+==================================================
+VERIFICATION
+==================================================
+
+verify() must receive/access actual execution evidence.
+
+Do NOT simply modify verify()'s return value while leaving it blind to execution results.
+
+Use the existing VerificationOutcome semantics:
+
+Success
+→ VERIFIED
+
+Unverified
+→ UNVERIFIED
+
+Failure
+→ FAILED
+
+PartialSuccess
+→ UNVERIFIED for compatibility
+
+NeedsRollback
+→ FAILED
+
+Aggregate result:
+
+If ANY step is FAILED:
+    aggregate = FAILED
+
+Else if ANY step is UNVERIFIED:
+    aggregate = UNVERIFIED
+
+Else:
+    aggregate = VERIFIED
+
+==================================================
+LEARNING
+==================================================
+
+Fix the current degenerate learning behavior.
+
+Learning must record:
+
+VERIFIED
+→ success
+
+FAILED
+→ failure
+
+UNVERIFIED
+→ neither success nor failure
+
+UNVERIFIED must not increase trust as though the action succeeded.
+
+==================================================
+LLM RESPONSE TRUTH
+==================================================
+
+The LLM must NEVER determine whether an action succeeded.
+
+Correct:
+
+EXECUTE
+→ VERIFY
+→ OUTCOME
+→ RESPONSE POLICY
+→ optional LLM wording
+→ TTS
+
+Incorrect:
+
+EXECUTE
+→ Claude
+→ "That worked."
+
+claudeSpeak must not override execution truth.
+
+If execution is UNVERIFIED, the LLM must not turn it into a verified success statement.
+
+==================================================
+RESPONSE COMPOSER
+==================================================
+
+Create/reuse a response layer that maps:
+
+action + verification outcome
+
+to honest user-facing speech.
+
+Example:
+
+Wi-Fi VERIFIED:
+"Wi-Fi is on."
+
+Wi-Fi UNVERIFIED:
+"I opened the Wi-Fi settings."
+
+Wi-Fi FAILED:
+"I couldn't change the Wi-Fi setting."
+
+The response composer must never claim evidence that does not exist.
+
+==================================================
+FAILURE SPEECH
+==================================================
+
+Do not speak raw exception messages to the user unless explicitly allowlisted as user-safe.
+
+Keep raw exceptions in logs.
+
+Use curated user-facing messages.
+
+Example:
+
+FAILED
+→ "I couldn't change that."
+
+Do not speak chain enum names such as:
+
+"Failed to CALL_CONTACT"
+
+==================================================
+CAPABILITY VERIFICATION — T1
+==================================================
+
+Only modify capabilities where the audit established that verification is currently incorrect.
+
+T1 MUST FIX:
+
+SystemCapability
+AppCapability
+MediaCapability
+
+--------------------------------------------------
+SYSTEM CAPABILITY
+--------------------------------------------------
+
+Correct verification where practical for:
+
+- Wi-Fi
+- Bluetooth
+- volume
+- flashlight
+- ringer mode
+- brightness
+- airplane mode
+- battery saver
+- lock
+- screenshot
+
+Do not invent verification evidence.
+
+Volume:
+
+Compare pre/post state.
+
+If already at maximum, report honestly.
+
+Flashlight:
+
+Use actual torch callback/state where available.
+
+Ringer:
+
+If permission/settings UI was opened instead of the mode changing:
+
+UNVERIFIED
+
+Brightness:
+
+Read back actual value if changed.
+
+Permission handoff:
+
+UNVERIFIED
+
+Airplane/battery saver:
+
+Opening a settings screen is not proof that the setting changed.
+
+UNVERIFIED unless actual evidence exists.
+
+--------------------------------------------------
+APP CAPABILITY
+--------------------------------------------------
+
+"Opened..." is not sufficient proof that an app is foreground.
+
+Use the existing ContextEngine or appropriate package resolver if already present.
+
+If foreground package cannot be reliably verified:
+
+UNVERIFIED
+
+Do not invent accessibility functionality.
+
+--------------------------------------------------
+MEDIA CAPABILITY
+--------------------------------------------------
+
+Account for asynchronous media state.
+
+For play/pause:
+
+poll for state for up to approximately 800 ms.
+
+Do not claim VERIFIED for next/previous unless actual evidence exists.
+
+==================================================
+COMMUNICATION CAPABILITY
+==================================================
+
+Distinguish:
+
+CALL
+DIAL
+COMPOSER OPENED
+MESSAGE SUBMITTED
+
+Do not call both CALL and DIAL:
+
+"Calling..."
+
+if one merely opens the dialer.
+
+SMS should only be VERIFIED if actual SENT evidence exists.
+
+Otherwise:
+
+UNVERIFIED
+
+==================================================
+REMEMBER THIS
+==================================================
+
+The current implementation does not actually persist the remembered content.
+
+Do NOT say:
+
+"Saved to memory."
+
+unless actual persistence exists.
+
+Correct the response to accurately describe what the current implementation actually did.
+
+Do NOT introduce a new memory system during this phase.
+
+==================================================
+CHAIN EXECUTION
+==================================================
+
+Chains must use the same safety/verification architecture.
+
+Chains must NOT bypass risk confirmation.
+
+Example:
+
+CALL_CONTACT:mom
+
+must not automatically execute if the existing risk system requires confirmation.
+
+Do not create a second risk engine.
+
+Use the existing risk/confirmation architecture.
+
+==================================================
+PHASE 2 ACCEPTANCE
+==================================================
+
+Add/modify JVM tests for:
+
+- ExecutionReport
+- verification aggregation
+- learning behavior
+- response composer
+- chain risk gating
+- no false success speech
+
+Run:
+
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew assembleDebug
+
+Do not continue if Phase 2 introduces regressions.
+
+Report:
+
+P2 RESULT
+- Files added:
+- Files modified:
+- Tests:
+- Build:
+- Known limitations:
+- Device-only items:
+
+==================================================
+PHASE 3 — PROVIDER-INDEPENDENT VOICE PROFILES
+==================================================
+
+Only start after P1 and P2 are stable.
+
+Create VoiceProfile ONLY if the repository does not already have an equivalent.
+
+Conceptually:
+
+VoiceProfile
+- id
+- name
+- providerId
+- providerVoiceId
+- config
+- optionalReferenceAudioPath
+- consentGranted
+- createdAt
+
+The voice profile must NOT depend directly on VoiceStudio.
+
+The active voice must be independent from:
+
+- LLM provider
+- AI model
+- IntentResolver
+- conversation engine
+
+==================================================
+REFERENCE AUDIO
+==================================================
+
+Store reference audio under:
+
+noBackupFilesDir
+
+Use safe path validation.
+
+Deleting a voice profile must not allow arbitrary filesystem deletion.
+
+Do not upload reference recordings automatically.
+
+Voice cloning requires explicit user consent.
+
+Do not implement cloning yet.
+
+==================================================
+PHASE 4 — VOICE GENERATION PROVIDER
+==================================================
+
+Create:
+
+VoiceGenerationProvider
+
+ONLY if an equivalent abstraction does not already exist.
+
+It should abstract only the necessary operations, such as:
+
+- health
+- listVoices
+- synthesize
+
+Do not leak VoiceStudio-specific details into the core VOXYN architecture.
+
+==================================================
+VOICESTUDIO INTEGRATION
+==================================================
+
+VoiceStudio repository:
+
+https://github.com/debpalash/VoiceStudio
+
+IMPORTANT:
+
+DO NOT GUESS THE VOICESTUDIO API.
+
+Do not assume:
+
+- endpoint names
+- request bodies
+- response formats
+- authentication
+- voice IDs
+- synthesis payloads
+- cloning endpoints
+
+The real running VoiceStudio API/OpenAPI specification is authoritative.
+
+Before implementing VoiceStudioProvider, obtain the actual running:
+
+GET /openapi.json
+
+and actual voice-listing API response.
+
+If the real endpoint differs from:
+
+/v1/audio/voices
+
+use the real endpoint.
+
+Do not invent an endpoint merely because the example above exists.
+
+==================================================
+VOICESTUDIO ARCHITECTURE
+==================================================
+
+Do NOT embed the VoiceStudio Electron application into VOXYN.
+
+Do NOT copy the VoiceStudio application source into the Android project.
+
+Use:
+
+VOXYN
+→ VoiceGenerationProvider
+→ VoiceStudioProvider
+→ VoiceStudio backend/service
+
+Keep VoiceStudio-specific code isolated behind the provider boundary.
+
+Respect the licenses of:
+
+- VoiceStudio
+- TTS engines
+- voice models
+- cloning models
+
+Do not assume every engine/model uses the same license as VoiceStudio.
+
+==================================================
+PHASE 5 — TTS FALLBACK
+==================================================
+
+Provider chain:
+
+VoiceStudio
+→ failure/unavailable
+→ Android TTS
+
+VoiceStudio must never become mandatory for basic VOXYN speech.
+
+Android TTS must continue working if:
+
+- VoiceStudio is offline
+- endpoint unavailable
+- request times out
+- provider is unhealthy
+- selected voice unavailable
+- synthesis fails
+
+Use finite timeouts.
+
+Do not allow indefinite network waits.
+
+==================================================
+PHASE 6 — MINIMAL VOICE SETTINGS
+==================================================
+
+Do NOT redesign the complete VOXYN UI yet.
+
+Implement only the minimum functional voice settings:
+
+Voice
+ ├── Active Voice
+ ├── Voice Profiles
+ ├── Add Voice
+ ├── VoiceStudio Endpoint
+ ├── Health
+ └── Preview
+
+Do not hard-code voice profiles that do not exist.
+
+==================================================
+VOICE CLONING — LATER
+==================================================
+
+Do NOT implement cloning during initial VoiceStudio integration.
+
+First prove:
+
+VoiceProfile
+→ provider voice
+→ synthesis
+→ playback
+→ Android TTS fallback
+
+Only after that works should cloning be implemented:
+
+reference recording
+→ explicit consent
+→ provider cloning
+→ returned voice ID
+→ VoiceProfile
+
+==================================================
+TASTE-SKILL — UI ONLY
+==================================================
+
+Repository:
+
+https://github.com/Leonxlnx/taste-skill
+
+This is a UI/design skill.
+
+It must NOT modify:
+
+- wake-word detection
+- STT
+- conversation state
+- VoxynEngine
+- execution
+- verification
+- AI fallback
+- TTS architecture
+- VoiceStudio provider
+- risk system
+
+Use taste-skill only during the later UI/UX phase.
+
+Potential targets:
+
+- voice conversation UI
+- voice profile UI
+- settings UI
+- Dynamic Island/assistant surfaces
+- typography
+- spacing
+- motion
+- visual density
+- visual hierarchy
+
+Do not allow taste-skill to modify business logic.
+
+==================================================
+MANIFEST
+==================================================
+
+Do NOT modify AndroidManifest.xml or <queries> simply because the audit suggested it.
+
+First reproduce the behavior on a real Android device.
+
+Specifically verify:
+
+- SMS intent resolution
+- alarm intent resolution
+- timer intent resolution
+- navigation intent resolution
+
+Do not add:
+
+QUERY_ALL_PACKAGES
+
+as a generic workaround.
+
+If a manifest change is actually required, make the smallest targeted change and document the reason.
+
+==================================================
+DEVICE-ONLY TESTS
+==================================================
+
+These must NOT be marked PASS without an actual Android device:
+
+- microphone handoff
+- Vosk native lifecycle
+- self-hearing
+- service restart
+- notification stop
+- permission denial
+- native microphone race
+- background behavior
+- actual SMS behavior
+- alarm resolution
+- foreground app verification
+- VoiceStudio connectivity
+
+Report:
+
+DEVICE-ONLY / UNTESTED
+
+when not tested.
+
+==================================================
+TESTING
+==================================================
+
+JVM/CI tests should cover:
+
+- ConversationSession fake-clock deadline
+- MicrophoneArbiter ownership
+- MicrophoneArbiter lease
+- follow-up policy
+- ExecutionReport
+- verification aggregation
+- learning outcome
+- response composer
+- chain risk gating
+- TTS utterance tracking
+
+Run:
+
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew assembleDebug
+
+when appropriate for each milestone.
+
+==================================================
+CHANGE CONTROL
+==================================================
+
+Do NOT implement everything in one giant change.
+
+Use this order:
+
+P0
+↓
+P1
+↓
+TEST
+↓
+P2
+↓
+TEST
+↓
+P3
+↓
+P4
+↓
+P5
+↓
+P6
+↓
+P7
+↓
+VOICE CLONING
+↓
+TASTE-SKILL UI
+
+After EVERY phase, stop and report:
+
+PHASE:
+FILES ADDED:
+FILES MODIFIED:
+FILES REMOVED:
+TESTS RUN:
+TEST RESULTS:
+BUILD RESULT:
+DEVICE-ONLY ITEMS:
+KNOWN LIMITATIONS:
+
+Do not automatically proceed to the next phase if the current phase fails.
+
+==================================================
+FINAL NON-NEGOTIABLE INVARIANTS
+==================================================
+
+1. Do not rewrite VOXYN.
+2. Preserve the existing AI/LLM fallback architecture.
+3. Preserve deterministic capabilities.
+4. One microphone owner at a time.
+5. Conversation expiry is a real deadline.
+6. Silence is not the same as conversation expiry.
+7. TTS completion, not TTS start, refreshes the conversation deadline.
+8. Execution results must reach verification.
+9. No evidence means UNVERIFIED, not SUCCESS.
+10. LLM output cannot override execution truth.
+11. VERIFIED / UNVERIFIED / FAILED must remain distinct.
+12. Learning must not treat UNVERIFIED as success.
+13. Chains cannot bypass risk confirmation.
+14. Do not invent VoiceStudio APIs.
+15. VoiceStudio must sit behind a provider abstraction.
+16. Android TTS remains the fallback.
+17. Voice cloning comes after basic VoiceStudio synthesis works.
+18. taste-skill is UI/UX only.
+19. Do not change the manifest without evidence.
+20. Do not claim device testing without device testing.
+21. Do not claim a build/test passed unless it actually ran.
+22. When uncertain, inspect the repository and report what you found instead of guessing.
+
+START NOW WITH PHASE 0 ONLY.
+
+Do not modify application source code until the P0 repository audit and baseline results have been reported.
