@@ -39,6 +39,11 @@ import com.voxyn.voice.ConversationSession
 import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.SpeechRecognizerEngineProvider
 import com.voxyn.voice.TextToSpeechManager
+import com.voxyn.voice.VoiceEnrollmentManager
+import com.voxyn.voice.VoiceProfileRepository
+import com.voxyn.voice.SpeakerVerifier
+import com.voxyn.voice.UnavailableSpeakerVerifier
+import com.voxyn.voice.VoiceGenerationProvider
 import com.voxyn.voice.VoskModelProvider
 import com.voxyn.web.DuckDuckGoSearchProvider
 import com.voxyn.web.NewsSearchProvider
@@ -67,6 +72,10 @@ val appModule = module {
 
     // ─── Voice & TTS ───────────────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
+    single<VoiceGenerationProvider> { get<TextToSpeechManager>() }
+    single<SpeakerVerifier> { UnavailableSpeakerVerifier() }
+    single { VoiceProfileRepository(androidContext()) }
+    single { VoiceEnrollmentManager(get()) }
     single { ConversationSession() }
     single { com.voxyn.voice.MicrophoneArbiter() }
     single { VoskModelProvider(androidContext()) }
@@ -170,4 +179,5 @@ val appModule = module {
 
     // ─── UI ────────────────────────────────────────────────────────────────────
     viewModel { VoxynViewModel(engine = get(), localModelManager = get(), parakeetModelManager = get()) }
+    viewModel { com.voxyn.ui.VoiceStudioViewModel(repository = get(), enrollment = get()) }
 }

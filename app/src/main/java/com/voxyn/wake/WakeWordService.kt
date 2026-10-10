@@ -19,6 +19,7 @@ import android.os.Looper
 import com.voxyn.MainActivity
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ConversationSession
+import com.voxyn.voice.MicrophoneArbiter
 import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceInputService

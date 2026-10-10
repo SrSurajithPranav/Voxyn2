@@ -42,6 +42,7 @@ fun MainScreen(
     val asrState by viewModel.asrState.collectAsState()
     val storagePrompt by viewModel.storagePrompt.collectAsState()
     var input by remember { mutableStateOf("") }
+    var voiceStudioOpen by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -63,6 +64,14 @@ fun MainScreen(
                 onDownload = { viewModel.downloadLocalModel() },
                 onAsrDownload = { viewModel.downloadAsrModel() }
             )
+            OutlinedButton(
+                onClick = { voiceStudioOpen = true },
+                border = BorderStroke(1.dp, VoxynCyan),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("VOICE STUDIO — FIVE SPEAKER PROFILES", color = VoxynCyan, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            }
             CommandInput(
                 value = input,
                 isRunning = state.isRunning,
@@ -100,7 +109,47 @@ fun MainScreen(
                 }
             )
         }
+        if (voiceStudioOpen) {
+            VoiceStudioDialog(onDismiss = { voiceStudioOpen = false })
+        }
     }
+}
+
+@Composable
+private fun VoiceStudioDialog(onDismiss: () -> Unit, viewModel: VoiceStudioViewModel = koinViewModel()) {
+    val state by viewModel.state.collectAsState()
+    AlertDialog(
+        onDismissRequest = { viewModel.stopPlayback(); onDismiss() },
+        title = { Text("VOICE STUDIO", fontFamily = FontFamily.Monospace) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Enroll exactly five speaker profiles. Record a clear six-second sample.", fontSize = 12.sp)
+                state.profiles.forEach { profile ->
+                    var label by remember(profile.id) { mutableStateOf(profile.label) }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        OutlinedTextField(
+                            value = label,
+                            onValueChange = { label = it },
+                            singleLine = true,
+                            label = { Text("Slot ${profile.slot + 1}") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (profile.enrolled) {
+                            TextButton(onClick = { viewModel.play(profile.slot) }) { Text("PLAY") }
+                            TextButton(onClick = { viewModel.record(profile.slot, label) }, enabled = state.recordingSlot == null) { Text("RETAKE") }
+                            TextButton(onClick = { viewModel.selectReplyVoice(profile.slot) }) { Text(if (state.selectedReplyVoiceId == profile.id) "SELECTED" else "USE") }
+                            TextButton(onClick = { viewModel.delete(profile.slot) }) { Text("CLEAR") }
+                        } else {
+                            TextButton(onClick = { viewModel.record(profile.slot, label) }, enabled = state.recordingSlot == null) { Text("RECORD") }
+                        }
+                    }
+                }
+                if (state.recordingSlot != null) Text(state.message, color = WARN_COLOR, fontSize = 12.sp)
+                else if (state.message.isNotBlank()) Text(state.message, color = DIM_COLOR, fontSize = 12.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { viewModel.stopPlayback(); onDismiss() }) { Text("DONE") } }
+    )
 }
 
 @Composable

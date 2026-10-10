@@ -40,7 +40,7 @@ internal class TtsCompletionGate(private val callback: () -> Unit) {
  * Prevents TTS from talking over itself, queueing duplicate stale speech,
  * or interfering with microphone listening.
  */
-class TextToSpeechManager(context: Context) {
+class TextToSpeechManager(context: Context) : VoiceGenerationProvider {
 
     private var tts: TextToSpeech? = null
     @Volatile private var isReady = false
@@ -135,7 +135,7 @@ class TextToSpeechManager(context: Context) {
         })
     }
 
-    fun speak(text: String, onComplete: (() -> Unit)? = null) {
+    override fun speak(text: String, voiceId: String?, onComplete: (() -> Unit)?) {
         if (text.isBlank()) {
             onComplete?.invoke()
             return
@@ -154,6 +154,9 @@ class TextToSpeechManager(context: Context) {
         }
         speakNow(text, onComplete)
     }
+
+    /** Backwards-compatible default voice entry point used by existing flows. */
+    fun speak(text: String, onComplete: (() -> Unit)? = null) = speak(text, null, onComplete)
 
     suspend fun speakAndWait(text: String) {
         if (text.isBlank()) return
@@ -183,7 +186,7 @@ class TextToSpeechManager(context: Context) {
 
     fun isSpeaking(): Boolean = isCurrentlySpeaking.get() || (tts?.isSpeaking == true)
 
-    fun stop() {
+    override fun stop() {
         pendingSpeech = null
         pendingCallback?.let { mainHandler.post(it) }
         pendingCallback = null
@@ -192,6 +195,8 @@ class TextToSpeechManager(context: Context) {
         isCurrentlySpeaking.set(false)
         tts?.stop()
     }
+
+    override fun isAvailable(): Boolean = isReady
 
     fun shutdown() {
         stop()
