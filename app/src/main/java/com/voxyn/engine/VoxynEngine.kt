@@ -22,6 +22,8 @@ import com.voxyn.router.RouteType
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ConversationSession
 import com.voxyn.voice.TextToSpeechManager
+import com.voxyn.voice.CommandVerificationGate
+import com.voxyn.voice.SpeakerVerificationResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -60,7 +62,8 @@ class VoxynEngine(
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
     private val contactResolver: ContactResolver,
-    private val phaseTimeoutMs : Long = 10_000L
+    private val phaseTimeoutMs : Long = 10_000L,
+    private val commandVerificationGate: CommandVerificationGate = CommandVerificationGate(com.voxyn.voice.UnavailableSpeakerVerifier())
 ) {
     private val _events = MutableSharedFlow<PipelineEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<PipelineEvent> = _events
@@ -77,13 +80,26 @@ class VoxynEngine(
 
     fun isProcessing(): Boolean = processing
 
-    fun process(input: String) {
+    fun process(input: String, samplesPcm16: ShortArray? = null) {
         activeJob?.cancel()
         val gen = ++pipelineGen
         processing = true
         activeJob = scope.launch {
             try {
-                runPipeline(input)
+                commandVerificationGate.runIfAuthorized(
+                    samplesPcm16 = samplesPcm16,
+                    onRejected = { result ->
+                        val message = when (result) {
+                            is SpeakerVerificationResult.Accepted -> return@runIfAuthorized
+                            is SpeakerVerificationResult.Uncertain -> "I couldn't confidently verify your voice. ${result.reason}. No command was run."
+                            is SpeakerVerificationResult.Unavailable -> "Speaker verification is unavailable. ${result.reason}. No command was run."
+                            is SpeakerVerificationResult.Rejected -> "I couldn't verify your voice. ${result.reason}. No command was run."
+                        }
+                        emit(PipelineEvent.EngineInterrupted(message))
+                        tts.speak(message)
+                    },
+                    command = { runPipeline(input) }
+                )
             } finally {
                 if (gen == pipelineGen) processing = false
             }
@@ -106,7 +122,7 @@ class VoxynEngine(
     // ─── Pipeline ─────────────────────────────────────────────────────
 
     private suspend fun runPipeline(raw: String) {
-        VoxynLogger.i("▶ Starting pipeline for: \"$raw\"", "ENGINE")
+        VoxynLogger.i("▶ Starting pipeline (inputChars=${raw.length})", "ENGINE")
         emit(PipelineEvent.PhaseStarted(PipelinePhase.INPUT))
         emit(PipelineEvent.PhaseCompleted(PipelinePhase.INPUT, raw))
 

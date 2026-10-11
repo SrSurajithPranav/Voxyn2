@@ -1,28 +1,20 @@
 package com.voxyn.voice
 
-import android.content.Context
 import com.voxyn.apps.AppCatalog
 import com.voxyn.utils.VoxynLogger
 
 /**
- * Chooses the command STT engine for the current session:
- *  - sherpa-onnx / Parakeet when the model is installed,
- *  - the bundled Vosk model as a controlled fallback while it downloads
- *    (or if the download fails) so the assistant never goes silent.
+ * Uses the bundled low-memory Vosk recognizer for command capture. The optional
+ * Parakeet 0.6B model is hundreds of MB resident and its native initialization
+ * was colliding with the first wake-to-command handoff on the target phone.
  */
 class SpeechRecognizerEngineProvider(
-    private val context: Context,
-    private val parakeetModelManager: ParakeetModelManager,
     private val voskModelProvider: VoskModelProvider,
     private val appCatalog: AppCatalog
 ) {
 
-    fun currentEngine(): SpeechRecognizerEngine =
-        if (parakeetModelManager.isModelPresent()) {
-            VoxynLogger.i("ASR: Parakeet engine active", "ASR")
-            SherpaParakeetRecognizer(context, parakeetModelManager)
-        } else {
-            VoxynLogger.w("ASR model unavailable — using Vosk fallback", "ASR")
-            VoskCommandRecognizer(voskModelProvider, appCatalog)
-        }
+    fun currentEngine(): SpeechRecognizerEngine {
+        VoxynLogger.i("ASR: bundled Vosk selected for immediate low-memory command capture; Parakeet is not loaded", "ASR")
+        return VoskCommandRecognizer(voskModelProvider, appCatalog)
+    }
 }

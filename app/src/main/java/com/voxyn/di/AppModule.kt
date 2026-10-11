@@ -3,6 +3,7 @@ package com.voxyn.di
 import com.voxyn.BuildConfig
 import com.voxyn.ai.ClaudeGeneralProvider
 import com.voxyn.ai.ClaudeIntentResolver
+import com.voxyn.ai.AiProvider
 import com.voxyn.ai.HybridGeneralResolver
 import com.voxyn.ai.LocalKnowledgeProvider
 import com.voxyn.ai.LocalLlmProvider
@@ -42,7 +43,9 @@ import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceEnrollmentManager
 import com.voxyn.voice.VoiceProfileRepository
 import com.voxyn.voice.SpeakerVerifier
-import com.voxyn.voice.UnavailableSpeakerVerifier
+import com.voxyn.voice.SherpaSpeakerVerifier
+import com.voxyn.voice.SpeakerEmbeddingModelManager
+import com.voxyn.voice.CommandVerificationGate
 import com.voxyn.voice.VoiceGenerationProvider
 import com.voxyn.voice.VoskModelProvider
 import com.voxyn.web.DuckDuckGoSearchProvider
@@ -73,14 +76,16 @@ val appModule = module {
     // ─── Voice & TTS ───────────────────────────────────────────────────────────
     single { TextToSpeechManager(androidContext()) }
     single<VoiceGenerationProvider> { get<TextToSpeechManager>() }
-    single<SpeakerVerifier> { UnavailableSpeakerVerifier() }
     single { VoiceProfileRepository(androidContext()) }
-    single { VoiceEnrollmentManager(get()) }
+    single { SpeakerEmbeddingModelManager(androidContext()) }
+    single<SpeakerVerifier> { SherpaSpeakerVerifier(androidContext(), get(), get()) }
+    single { CommandVerificationGate(get()) }
+    single { VoiceEnrollmentManager(get(), get(), get()) }
     single { ConversationSession() }
     single { com.voxyn.voice.MicrophoneArbiter() }
     single { VoskModelProvider(androidContext()) }
     single { ParakeetModelManager(androidContext()) }
-    single { SpeechRecognizerEngineProvider(androidContext(), get(), get(), get()) }
+    single { SpeechRecognizerEngineProvider(get(), get()) }
 
     // ─── Perception & Routing ───────────────────────────────────────────────────
     single { SpeechNormalizer(get()) }
@@ -98,6 +103,7 @@ val appModule = module {
     single { LocalKnowledgeProvider() }
     single { LocalModelManager(androidContext()) }
     single { LocalLlmProvider(androidContext(), get()) }
+    single<AiProvider> { get<LocalLlmProvider>() }
 
     // ─── Hybrid general intelligence: local → web → cloud ───────────────────────
     single<com.voxyn.ai.GeneralQueryResolver> {
@@ -173,7 +179,8 @@ val appModule = module {
             localKnowledge   = get(),
             claudeResolver = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeIntentResolver(it) },
             modeEngine     = get(),
-            contactResolver = get()
+            contactResolver = get(),
+            commandVerificationGate = get()
         )
     }
 

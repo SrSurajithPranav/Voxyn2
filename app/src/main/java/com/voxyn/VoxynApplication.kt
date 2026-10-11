@@ -1,8 +1,8 @@
 package com.voxyn
 
 import android.app.Application
+import android.app.ActivityManager
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -11,7 +11,6 @@ import com.voxyn.ai.LocalModelManager
 import com.voxyn.di.appModule
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ParakeetModelManager
-import com.voxyn.wake.WakeWordService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,8 +34,8 @@ class VoxynApplication : Application() {
         }
 
         logDiagnostics()
-        VoxynLogger.i("VOXYN starting — launching background services", "APP")
-        startWakeService()
+        logHistoricalProcessExits()
+        VoxynLogger.i("VOXYN starting — microphone service awaits a visible user entry point", "APP")
         restoreModelsInBackground()
     }
 
@@ -56,21 +55,10 @@ class VoxynApplication : Application() {
                 false
             }
             VoxynLogger.i(
-                if (asrOk) "ASR Parakeet model ready — offline STT active"
-                else "ASR model not available — Vosk fallback until download completes",
+                if (asrOk) "Parakeet files available; command runtime uses low-memory Vosk"
+                else "Parakeet unavailable; bundled low-memory Vosk command STT active",
                 "APP"
             )
-            if (asrOk) {
-                // Pre-load the ~650 MB recognizer in the background so the first
-                // "Hey VOXYN" command is captured from the very first word.
-                val t0 = System.currentTimeMillis()
-                val rec = runCatching { parakeetManager.getRecognizer() }.getOrNull()
-                VoxynLogger.i(
-                    if (rec != null) "ASR Parakeet recognizer pre-loaded (${System.currentTimeMillis() - t0} ms)"
-                    else "ASR Parakeet recognizer pre-load failed",
-                    "APP"
-                )
-            }
         }
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val llmOk = runCatching {
@@ -98,37 +86,38 @@ class VoxynApplication : Application() {
                 "micGranted=$mic notificationsGranted=$notif overlay=${Settings.canDrawOverlays(this)}",
             "APP"
         )
+        val memory = ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(memory)
+        VoxynLogger.i(
+            "memory availableMiB=${memory.availMem / (1024 * 1024)} totalMiB=${memory.totalMem / (1024 * 1024)} lowMemory=${memory.lowMemory}",
+            "APP"
+        )
+    }
+
+    /** Android retains the reason for recent process deaths, including LMK/native exits. */
+    private fun logHistoricalProcessExits() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return
+        runCatching {
+            manager.getHistoricalProcessExitReasons(packageName, 0, 5).forEach { exit ->
+                VoxynLogger.w(
+                    "Previous process exit: reason=${exit.reason} status=${exit.status} " +
+                        "timestamp=${exit.timestamp} process=${exit.processName} " +
+                        "description=${exit.description.orEmpty().take(300)}",
+                    "CRASH"
+                )
+            }
+        }.onFailure {
+            VoxynLogger.w("Could not read historical process exits: ${it.message}", "CRASH")
+        }
     }
 
     private fun installCrashHandler() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            VoxynLogger.crash("Uncaught on ${thread.name}: $throwable")
+            VoxynLogger.crash("Uncaught on ${thread.name}: ${android.util.Log.getStackTraceString(throwable)}")
             prev?.uncaughtException(thread, throwable)
         }
     }
 
-    private fun startWakeService() {
-        // Never start the always-on listener without the mic — otherwise it shows
-        // a "listening" notification while hearing nothing.
-        val micOk = (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED)
-        if (!micOk) {
-            VoxynLogger.w("Microphone permission not granted — wake word service NOT started", "APP")
-            return
-        }
-        try {
-            startForegroundService(
-                Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_START
-                }
-            )
-            VoxynLogger.i("WakeWordService started from Application", "APP")
-        } catch (e: Exception) {
-            // On Android 14+ (SDK 34+) calling startForegroundService from Application.onCreate
-            // throws ForegroundServiceStartNotAllowedException when the app is not yet in the
-            // foreground. MainActivity.onResume → startVoxynServices() will retry once visible.
-            VoxynLogger.w("Could not start WakeWordService from Application (will retry from Activity): ${e.message}", "APP")
-        }
-    }
 }

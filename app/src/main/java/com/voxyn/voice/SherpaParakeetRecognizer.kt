@@ -135,8 +135,9 @@ class SherpaParakeetRecognizer(
                 VoxynLogger.i("ASR: inference completed in ${inferenceMs} ms", "ASR")
 
                 if (text.isNotBlank()) {
-                    VoxynLogger.i("ASR: transcript = \"$text\"", "ASR")
-                    listener?.onResult(text, audioMs, inferenceMs)
+                    VoxynLogger.i("ASR: transcript captured (${text.length} chars)", "ASR")
+                    val pcm16 = ShortArray(segSamples.size) { (segSamples[it] * 32767f).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort() }
+                    listener?.onResult(text, audioMs, inferenceMs, pcm16)
                 } else {
                     // Noise that VAD treated as speech but the model heard nothing.
                     VoxynLogger.i("ASR: empty transcript — treated as no-speech", "ASR")

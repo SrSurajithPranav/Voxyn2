@@ -53,7 +53,7 @@ internal fun conversationContinuation(session: ConversationSession): Conversatio
 
 /**
  * VoiceInputService — listens for a spoken command through the active
- * SpeechRecognizerEngine (sherpa-onnx/Parakeet, with Vosk as a fallback) and
+ * SpeechRecognizerEngine (bundled low-memory offline Vosk) and
  * runs the engine.
  *
  * After a command the conversation stays open for [ConversationSession.windowMs]:
@@ -86,7 +86,6 @@ class VoiceInputService : Service() {
     private val session: ConversationSession by inject()
     private val tts: TextToSpeechManager by inject()
     private val engineProvider: SpeechRecognizerEngineProvider by inject()
-    private val parakeetModelManager: ParakeetModelManager by inject()
     private val microphoneArbiter: MicrophoneArbiter by inject()
 
     private var activeEngine      : SpeechRecognizerEngine? = null
@@ -155,12 +154,6 @@ class VoiceInputService : Service() {
 
         requestAudioFocus()
 
-        // First-time setup: if Parakeet isn't downloaded yet, fetch it in the
-        // background (progressed in the notification) while Vosk handles commands.
-        if (!parakeetModelManager.isModelPresent() && !parakeetModelManager.downloadState.value.downloading) {
-            maybeDownloadAsrModel()
-        }
-
         val recognizerEngine = runCatching { engineProvider.currentEngine() }.getOrElse { error ->
             handleRecognizerStartFailure(error.message ?: "Speech engine unavailable")
             return
@@ -214,10 +207,10 @@ class VoiceInputService : Service() {
             }
         }
 
-        override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long) {
+        override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, samplesPcm16: ShortArray) {
             mainHandler.post {
                 if (stopping) return@post
-                handleResult(text)
+                handleResult(text, samplesPcm16)
             }
         }
 
@@ -237,24 +230,7 @@ class VoiceInputService : Service() {
         }
     }
 
-    private fun maybeDownloadAsrModel() {
-        scope.launch {
-            // Restore from Downloads / shared storage first — no network needed.
-            if (parakeetModelManager.ensureAvailable()) {
-                VoxynLogger.i("ASR Parakeet model restored — using offline STT now", "VOICE")
-                return@launch
-            }
-            parakeetModelManager.download { progress ->
-                val pct = (progress * 100).toInt()
-                VoxynLogger.i("ASR model download $pct%", "VOICE")
-                mainHandler.post {
-                    if (!stopping) updateNotification("VOXYN — downloading speech model $pct% (first time only)")
-                }
-            }
-        }
-    }
-
-    private fun handleResult(text: String) {
+    private fun handleResult(text: String, samplesPcm16: ShortArray) {
         if (stopping) return
         isListening = false
         activeEngine?.stop()
@@ -264,9 +240,10 @@ class VoiceInputService : Service() {
         consecutiveFailures = 0
         updateNotification("Processing...")
 
-        VoxynLogger.i("Command: \"$text\"", "VOICE")
+        VoxynLogger.i("Command transcript captured (${text.length} chars)", "VOICE")
+        VoxynLogger.d("Passing captured command audio to speaker gate: samples=${samplesPcm16.size}, rate=${VoiceEnrollmentManager.SAMPLE_RATE}", "SPEAKER")
         session.addTurn(ConversationTurn(userInput = text, action = "", response = ""))
-        engine.process(text)
+        engine.process(text, samplesPcm16)
         waitForEngineThenContinue()
     }
 

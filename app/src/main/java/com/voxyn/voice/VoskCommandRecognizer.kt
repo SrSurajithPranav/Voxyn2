@@ -108,6 +108,7 @@ class VoskCommandRecognizer(
         var hadSpeech = false
         var finalText: String? = null
         var lastPartial = ""
+        val captured = ArrayList<Short>(SAMPLE_RATE * 12)
         val buffer = ShortArray(
             AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
@@ -119,6 +120,7 @@ class VoskCommandRecognizer(
         while (isActive && isRunning) {
             val read = record.read(buffer, 0, buffer.size)
             if (read <= 0) continue
+            for (i in 0 until read) captured.add(buffer[i])
             val now = System.currentTimeMillis()
 
             if (activeRecognizer.acceptWaveForm(buffer, read)) {
@@ -127,7 +129,7 @@ class VoskCommandRecognizer(
                     finalText = text
                     hadSpeech = true
                     lastSpeechTime = now
-                    VoxynLogger.i("ASR: Vosk final: \"$text\"", "ASR")
+                    VoxynLogger.i("ASR: Vosk final transcript captured (${text.length} chars)", "ASR")
                     break
                 }
             } else {
@@ -152,8 +154,8 @@ class VoskCommandRecognizer(
 
             val best = finalText ?: lastPartial.takeIf { it.isNotEmpty() }
             if (best != null) {
-                VoxynLogger.i("ASR: transcript = \"$best\"", "ASR")
-                listener?.onResult(best, 0L, 0L)
+                VoxynLogger.i("ASR: transcript captured (${best.length} chars)", "ASR")
+                listener?.onResult(best, captured.size * 1000L / SAMPLE_RATE, 0L, captured.toShortArray())
             } else {
                 listener?.onNoSpeech()
             }

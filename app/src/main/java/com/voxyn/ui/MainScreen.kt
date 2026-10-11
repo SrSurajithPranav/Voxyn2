@@ -35,6 +35,8 @@ private val DIM_COLOR     = Color(0xFF546E7A)
 fun MainScreen(
     onStartVoiceInput: () -> Unit,
     onRequestAllFilesAccess: () -> Unit,
+    onPauseVoiceServices: () -> Unit = {},
+    onResumeVoiceServices: () -> Unit = {},
     viewModel: VoxynViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -61,11 +63,10 @@ fun MainScreen(
             LocalAiPanel(
                 state = localAi,
                 asrState = asrState,
-                onDownload = { viewModel.downloadLocalModel() },
-                onAsrDownload = { viewModel.downloadAsrModel() }
+                onDownload = { viewModel.downloadLocalModel() }
             )
             OutlinedButton(
-                onClick = { voiceStudioOpen = true },
+                onClick = { onPauseVoiceServices(); voiceStudioOpen = true },
                 border = BorderStroke(1.dp, VoxynCyan),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -110,7 +111,7 @@ fun MainScreen(
             )
         }
         if (voiceStudioOpen) {
-            VoiceStudioDialog(onDismiss = { voiceStudioOpen = false })
+            VoiceStudioDialog(onDismiss = { voiceStudioOpen = false; onResumeVoiceServices() })
         }
     }
 }
@@ -123,7 +124,10 @@ private fun VoiceStudioDialog(onDismiss: () -> Unit, viewModel: VoiceStudioViewM
         title = { Text("VOICE STUDIO", fontFamily = FontFamily.Monospace) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Enroll exactly five speaker profiles. Record a clear six-second sample.", fontSize = 12.sp)
+                Text(
+                    "Enroll exactly five speaker profiles. Record a clear six-second sample. The first speaker enrollment downloads a 38 MB local verification model. Reply samples are saved as voice references; without a cloning provider, VOXYN uses standard Android system TTS and does not imitate them.",
+                    fontSize = 12.sp
+                )
                 state.profiles.forEach { profile ->
                     var label by remember(profile.id) { mutableStateOf(profile.label) }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -135,6 +139,7 @@ private fun VoiceStudioDialog(onDismiss: () -> Unit, viewModel: VoiceStudioViewM
                             modifier = Modifier.weight(1f)
                         )
                         if (profile.enrolled) {
+                            Text(if (profile.speakerEnrolled) "VERIFIED" else "RE-ENROLL", color = if (profile.speakerEnrolled) SUCCESS_COLOR else WARN_COLOR, fontSize = 8.sp)
                             TextButton(onClick = { viewModel.play(profile.slot) }) { Text("PLAY") }
                             TextButton(onClick = { viewModel.record(profile.slot, label) }, enabled = state.recordingSlot == null) { Text("RETAKE") }
                             TextButton(onClick = { viewModel.selectReplyVoice(profile.slot) }) { Text(if (state.selectedReplyVoiceId == profile.id) "SELECTED" else "USE") }
@@ -245,8 +250,7 @@ fun LogPanel(logs: List<String>, modifier: Modifier = Modifier) {
 fun LocalAiPanel(
     state: LocalAiUiState,
     asrState: AsrDownloadState,
-    onDownload: () -> Unit,
-    onAsrDownload: () -> Unit
+    onDownload: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -308,30 +312,13 @@ fun LocalAiPanel(
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
-                    when {
-                        asrState.downloading -> "downloading ${(asrState.progress * 100).toInt()}%"
-                        asrState.modelPresent -> "Parakeet STT ready — offline"
-                        asrState.message.isNotBlank() -> asrState.message
-                        else -> "not installed — Vosk fallback active"
-                    },
-                    color = if (asrState.modelPresent) SUCCESS_COLOR else DIM_COLOR,
+                    if (asrState.modelPresent) "Vosk active • Parakeet files cached"
+                    else "Vosk command STT active • offline",
+                    color = SUCCESS_COLOR,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.weight(1f)
                 )
-                if (!asrState.modelPresent && !asrState.downloading) {
-                    OutlinedButton(
-                        onClick = onAsrDownload,
-                        border = BorderStroke(1.dp, VoxynCyan),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Text("DOWNLOAD", color = VoxynCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                    }
-                }
-                if (asrState.downloading) {
-                    Text("${(asrState.progress * 100).toInt()}%", color = VoxynCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                }
             }
         }
     }

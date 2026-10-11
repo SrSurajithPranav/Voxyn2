@@ -91,12 +91,6 @@ class VoxynViewModel(
         }
     }
 
-    fun downloadAsrModel() {
-        viewModelScope.launch {
-            parakeetModelManager.download()
-        }
-    }
-
     /** True only when both offline engines already have their models. */
     fun modelsPresent(): Boolean =
         parakeetModelManager.isModelPresent() && localModelManager.isModelPresent()

@@ -33,7 +33,7 @@ interface SpeechRecognizerEngine {
         fun onPartial(text: String)
 
         /** A complete spoken command. */
-        fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long)
+        fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, samplesPcm16: ShortArray)
 
         /** The engine captured audio but no usable speech was found. */
         fun onNoSpeech()

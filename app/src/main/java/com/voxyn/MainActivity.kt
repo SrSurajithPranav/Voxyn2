@@ -22,6 +22,8 @@ import com.voxyn.ui.theme.VoxynBg
 import com.voxyn.ui.theme.VoxynTheme
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.receiver.BootReceiver
+import com.voxyn.receiver.VoiceStartupPolicy
 import com.voxyn.wake.WakeWordService
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
@@ -78,7 +80,9 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MainScreen(
                         onStartVoiceInput = ::startVoiceInput,
-                        onRequestAllFilesAccess = ::requestAllFilesAccess
+                        onRequestAllFilesAccess = ::requestAllFilesAccess,
+                        onPauseVoiceServices = ::pauseVoiceServices,
+                        onResumeVoiceServices = ::startVoxynServices
                     )
                 }
             }
@@ -194,16 +198,36 @@ class MainActivity : ComponentActivity() {
     private fun startVoxynServices() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
-            VoxynLogger.w("Microphone permission is required before starting voice services", "MAIN")
+            VoxynLogger.w("LISTENING_NOT_ELIGIBLE reason=MICROPHONE_PERMISSION_REQUIRED", "MAIN")
             return
+        }
+        val bootDeferred = getSharedPreferences(BootReceiver.STARTUP_PREFS, MODE_PRIVATE)
+            .getBoolean(BootReceiver.KEY_BOOT_REQUIRES_VISIBLE_START, false)
+        if (bootDeferred) {
+            getSharedPreferences(BootReceiver.STARTUP_PREFS, MODE_PRIVATE).edit()
+                .remove(BootReceiver.KEY_BOOT_REQUIRES_VISIBLE_START)
+                .apply()
+            VoxynLogger.i("VISIBLE_USER_ENTRY_AFTER_BOOT; attempting microphone service start", "MAIN")
+        } else {
+            VoxynLogger.i("LISTENING_ELIGIBLE source=VISIBLE_ACTIVITY", "MAIN")
         }
         try {
             startForegroundService(Intent(this, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_START
             })
+            VoxynLogger.i("MICROPHONE_SERVICE_START_REQUESTED source=VISIBLE_ACTIVITY", "MAIN")
         } catch (e: Exception) {
-            VoxynLogger.e("Failed to start WakeWordService: ${e.message}", tag = "MAIN")
+            val category = VoiceStartupPolicy.startupFailureCategory(e.javaClass.simpleName)
+            VoxynLogger.e(
+                "$category source=VISIBLE_ACTIVITY exception=${e.javaClass.simpleName}; listening is not active",
+                tag = "MAIN"
+            )
         }
+    }
+
+    private fun pauseVoiceServices() {
+        stopService(Intent(this, com.voxyn.voice.VoiceInputService::class.java))
+        stopService(Intent(this, WakeWordService::class.java))
     }
 
     private fun startVoiceInput() {

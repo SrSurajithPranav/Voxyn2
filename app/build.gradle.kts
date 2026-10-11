@@ -11,8 +11,8 @@ android {
         applicationId = "com.voxyn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "1.0.19"
+        versionCode = 24
+        versionName = "1.0.23"
         buildConfigField("String", "CLAUDE_API_KEY", "\"\"")
         ndk {
             // The user's device is ARM64; shipping only arm64 keeps the APK small
@@ -52,6 +52,18 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"
     }
+}
+
+// Keep the debug artifact identifiable when copied to a phone. AGP 8.3 still
+// writes its fixed app-debug.apk, so publish a versioned copy after assembly.
+tasks.register<Copy>("versionDebugApk") {
+    dependsOn("packageDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(layout.buildDirectory.dir("outputs/versioned-apk/debug"))
+    rename { "VOXYN-v${android.defaultConfig.versionName}-build${android.defaultConfig.versionCode}-debug.apk" }
+}
+tasks.configureEach {
+    if (name == "assembleDebug") finalizedBy("versionDebugApk")
 }
 
 dependencies {

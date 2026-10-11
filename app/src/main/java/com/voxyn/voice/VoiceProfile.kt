@@ -8,7 +8,8 @@ data class VoiceProfile(
     val enrolled: Boolean,
     val sampleCount: Int,
     val samplePath: String?,
-    val updatedAt: Long?
+    val updatedAt: Long?,
+    val speakerEnrolled: Boolean = false
 )
 
 sealed class EnrollmentResult {

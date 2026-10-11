@@ -16,11 +16,12 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import com.voxyn.MainActivity
+import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ConversationSession
 import com.voxyn.voice.MicrophoneArbiter
-import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceInputService
 import com.voxyn.voice.VoskModelProvider
@@ -94,7 +95,6 @@ class WakeWordService : Service() {
     private val tts: TextToSpeechManager by inject()
     private val session: ConversationSession by inject()
     private val modelProvider: VoskModelProvider by inject()
-    private val parakeetModelManager: ParakeetModelManager by inject()
     private val microphoneArbiter: MicrophoneArbiter by inject()
 
     private var model        : Model? = null
@@ -111,9 +111,10 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("VOXYN — say Hey VOXYN"))
+        startForeground(NOTIFICATION_ID, buildNotification("VOXYN — starting voice service"))
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         VoxynLogger.i("WakeWordService created", "WAKE")
+        ensureOverlayService()
         loadModelAndStart()
     }
 
@@ -140,6 +141,7 @@ class WakeWordService : Service() {
             else -> {
                 // ACTION_START or null (START_STICKY restart)
                 stopped = false
+                ensureOverlayService()
                 startDetection()
             }
         }
@@ -147,6 +149,17 @@ class WakeWordService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /** Keep the island paired with the persistent wake service, including sticky restarts. */
+    private fun ensureOverlayService() {
+        if (!Settings.canDrawOverlays(this)) return
+        try {
+            startForegroundService(Intent(this, OverlayService::class.java))
+            VoxynLogger.d("Overlay service ensured by wake-service lifecycle", "OVERLAY")
+        } catch (error: Exception) {
+            VoxynLogger.e("Could not ensure overlay service from wake listener: ${error.message}", tag = "OVERLAY")
+        }
+    }
 
     override fun onDestroy() {
         stopAll()
@@ -167,7 +180,7 @@ class WakeWordService : Service() {
                 mainHandler.post { startDetection() }
             } else {
                 VoxynLogger.e("Vosk model load failed", tag = "WAKE")
-                updateNotification("VOXYN — wake word starting, retrying")
+                updateNotification("VOXYN — wake model unavailable; retrying")
                 if (!stopped) {
                     delay(MODEL_RETRY_MS)
                     loadModelAndStart()
@@ -184,7 +197,7 @@ class WakeWordService : Service() {
         if (!microphoneArbiter.acquire(MicrophoneArbiter.Owner.WAKE)) return
         permissionBlocked = false
         isDetecting = true
-        updateNotification("VOXYN — say Hey VOXYN")
+        updateNotification("VOXYN — starting microphone")
 
         detectJob?.cancel()
         detectJob = scope.launch {
@@ -214,8 +227,14 @@ class WakeWordService : Service() {
                 val rec = Recognizer(m, SAMPLE_RATE.toFloat(), GRAMMAR)
                 recognizer = rec
                 record.startRecording()
+                if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    VoxynLogger.e("AudioRecord start returned without recording state", tag = "WAKE")
+                    onDetectionFailed()
+                    return@launch
+                }
 
                 val buffer = ShortArray(bufferSize)
+                updateNotification("VOXYN — say Hey VOXYN")
                 VoxynLogger.i("Vosk wake-word detection running", "WAKE")
 
                 while (isActive && isDetecting && !stopped) {
@@ -247,7 +266,7 @@ class WakeWordService : Service() {
                     updateNotification("VOXYN — microphone permission needed. Open the app and allow it.")
                 }
             } catch (e: Exception) {
-                VoxynLogger.e("Vosk detection loop failed: ${e.message}", tag = "WAKE")
+                VoxynLogger.e("Vosk detection loop failed: ${e.javaClass.simpleName}", tag = "WAKE")
                 onDetectionFailed()
             } finally {
                 releaseAudioRecord()
@@ -260,21 +279,28 @@ class WakeWordService : Service() {
     }
 
     /**
-     * The bundled small Vosk model can't hear "voxyn" — with the wake grammar, the
-     * only tokens it can ever emit are hey/hi/okay/voxyn plus [unk] for out-of-
-     * vocabulary speech. Any result containing a trigger word is a wake attempt.
+     * The bundled small Vosk model often decodes the out-of-vocabulary name as
+     * `[unk]` even though it is in the wake grammar. Treat an unknown word directly
+     * after a wake prefix as the assistant name; standalone greetings stay inert.
      */
     private fun isWakeTrigger(text: String): Boolean {
         // A standalone "hey", "hi", or "okay" is ordinary speech and should
         // not steal the microphone.  "voxyn" alone is accepted for convenience;
         // the other accepted forms must contain the assistant name.
         val normalized = text.trim().lowercase().replace(Regex("\\s+"), " ")
-        return normalized == "voxyn" || WAKE_VARIANTS.any { normalized.contains(it) }
+        if (normalized == "voxyn" || WAKE_VARIANTS.any { normalized.contains(it) }) return true
+
+        // On this device Vosk consistently emits `hey [unk]` for “Hey VOXYN”.
+        // Its wake grammar contains no ordinary conversation, so accepting this
+        // two-token form restores wake detection without making a lone “hey” wake it.
+        val words = normalized.split(' ')
+        return words.size >= 2 && words[0] in setOf("hey", "hi", "okay") && words[1] == "[unk]"
     }
 
     private fun onDetectionFailed() {
         isDetecting = false
         if (stopped || permissionBlocked) return
+        updateNotification("VOXYN — not listening; retrying startup")
         VoxynLogger.w("Detection failed — retrying in ${MODEL_RETRY_MS}ms", "WAKE")
         mainHandler.postDelayed({ startDetection() }, MODEL_RETRY_MS)
     }
@@ -282,12 +308,7 @@ class WakeWordService : Service() {
     private fun onWakeTriggered() {
         session.end()
         updateNotification("VOXYN — waking up...")
-        // Pre-load the command recognizer while the activation line is spoken so
-        // the mic is ready from the user's very first word.
-        scope.launch {
-            runCatching { parakeetModelManager.getRecognizer() }
-                .onSuccess { VoxynLogger.i("Parakeet recognizer pre-loaded on wake", "WAKE") }
-        }
+        VoxynLogger.i("Wake handoff started; preparing immediate command capture", "WAKE")
         speakActivationThenListen()
     }
 
@@ -322,7 +343,10 @@ class WakeWordService : Service() {
             )
             VoxynLogger.i("VoiceInputService started", "WAKE")
         } catch (e: Exception) {
-            VoxynLogger.e("Failed to start VoiceInputService: ${e.message}", tag = "WAKE")
+            VoxynLogger.e(
+                "VoiceInputService start failed: ${e.javaClass.simpleName}; command capture did not start",
+                tag = "WAKE"
+            )
             mainHandler.postDelayed({ startDetection() }, 2_000L)
         }
     }

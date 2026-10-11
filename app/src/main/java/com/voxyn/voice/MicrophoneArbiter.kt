@@ -5,7 +5,7 @@ class MicrophoneArbiter(
     private val clock: () -> Long = System::currentTimeMillis,
     private val commandLeaseMs: Long = 90_000L
 ) {
-    enum class Owner { NONE, WAKE, COMMAND }
+    enum class Owner { NONE, WAKE, COMMAND, ENROLLMENT }
 
     private val lock = Any()
     private var owner = Owner.NONE
