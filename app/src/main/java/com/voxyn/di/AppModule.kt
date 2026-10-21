@@ -35,10 +35,15 @@ import com.voxyn.perception.ContextEngine
 import com.voxyn.perception.SpeechNormalizer
 import com.voxyn.router.RequestRouter
 import com.voxyn.ui.VoxynViewModel
+import com.voxyn.security.CommandVerificationGate
+import com.voxyn.security.SpeakerProfileRepository
+import com.voxyn.security.SpeakerVerifier
 import com.voxyn.voice.ConversationSession
 import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.SpeechRecognizerEngineProvider
 import com.voxyn.voice.TextToSpeechManager
+import com.voxyn.voice.VoiceDiagnosticsManager
+import com.voxyn.voice.VoiceSessionCoordinator
 import com.voxyn.voice.VoskModelProvider
 import com.voxyn.web.DuckDuckGoSearchProvider
 import com.voxyn.web.NewsSearchProvider
@@ -59,6 +64,12 @@ val appModule = module {
     single { MemoryRepository(androidContext()) }
     single { ContextEngine(androidContext()) }
 
+    // ─── Security & Speaker Verification ─────────────────────────────────────────
+    single { SpeakerProfileRepository(androidContext()) }
+    single { SpeakerVerifier(get()) }
+    single { CommandVerificationGate(get(), get()) }
+    single { com.voxyn.security.VoiceEnrollmentManager(androidContext(), get(), get()) }
+
     // ─── Communication & Messaging ─────────────────────────────────────────────
     single<ContactStore> { AndroidContactStore(androidContext().contentResolver) }
     single { ContactResolver(get()) }
@@ -66,6 +77,8 @@ val appModule = module {
     single { MessageComposer(androidContext(), get()) }
 
     // ─── Voice & TTS ───────────────────────────────────────────────────────────
+    single { VoiceDiagnosticsManager() }
+    single { VoiceSessionCoordinator(get(), get()) }
     single { TextToSpeechManager(androidContext()) }
     single { ConversationSession() }
     single { VoskModelProvider(androidContext()) }
@@ -168,5 +181,15 @@ val appModule = module {
     }
 
     // ─── UI ────────────────────────────────────────────────────────────────────
-    viewModel { VoxynViewModel(engine = get(), localModelManager = get(), parakeetModelManager = get()) }
+    viewModel {
+        VoxynViewModel(
+            engine = get(),
+            localModelManager = get(),
+            parakeetModelManager = get(),
+            tts = get(),
+            diagnostics = get(),
+            speakerRepo = get(),
+            enrollmentManager = get()
+        )
+    }
 }

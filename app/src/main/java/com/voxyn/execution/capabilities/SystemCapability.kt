@@ -30,6 +30,7 @@ class SystemCapability(
         "BLUETOOTH_OFF",
         "VOLUME_UP",
         "VOLUME_DOWN",
+        "SET_VOLUME",
         "SILENT_MODE",
         "VIBRATE_MODE",
         "NORMAL_MODE",
@@ -91,6 +92,28 @@ class SystemCapability(
                         AudioManager.FLAG_SHOW_UI
                     )
                     PhaseResult.Success("Volume decreased")
+                }
+
+                "SET_VOLUME" -> {
+                    val rawLevel = step.params["level"] ?: step.params["percent"] ?: "50"
+                    val percent = when (rawLevel.lowercase()) {
+                        "zero" -> 0
+                        "ten" -> 10
+                        "twenty" -> 20
+                        "thirty" -> 30
+                        "forty" -> 40
+                        "fifty" -> 50
+                        "sixty" -> 60
+                        "seventy" -> 70
+                        "eighty" -> 80
+                        "ninety" -> 90
+                        "hundred" -> 100
+                        else -> rawLevel.toIntOrNull() ?: 50
+                    }
+                    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    val target = ((percent / 100f) * max).toInt().coerceIn(0, max)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
+                    PhaseResult.Success("Volume set to $percent percent")
                 }
 
                 "SILENT_MODE" -> silentMode()
@@ -195,7 +218,7 @@ class SystemCapability(
     override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
         return runCatching {
             when (step.actionType) {
-                "VOLUME_UP", "VOLUME_DOWN" -> {
+                "VOLUME_UP", "VOLUME_DOWN", "SET_VOLUME" -> {
                     val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     if (vol >= 0) VerificationOutcome.Success else VerificationOutcome.Failure
                 }

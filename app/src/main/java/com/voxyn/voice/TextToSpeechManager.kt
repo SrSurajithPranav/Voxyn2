@@ -13,9 +13,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+enum class VoiceChoice(val displayName: String, val pitch: Float, val speechRate: Float, val voiceFilter: String?) {
+    SYSTEM_DEFAULT("System Default", 1.0f, 1.0f, null),
+    JARVIS("Jarvis (Warm Male)", 0.88f, 1.0f, "male"),
+    FRIDAY("Friday (Crisp Female)", 1.15f, 1.05f, "female"),
+    CADENCE("Cadence (Smooth)", 0.98f, 0.95f, null),
+    EXPRESSIVE("Dynamic (Expressive)", 1.08f, 1.10f, null);
+
+    companion object {
+        fun fromOrdinal(ordinal: Int): VoiceChoice =
+            values().getOrElse(ordinal) { SYSTEM_DEFAULT }
+
+        fun fromName(name: String): VoiceChoice =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) || it.displayName.equals(name, ignoreCase = true) }
+                ?: SYSTEM_DEFAULT
+    }
+}
+
 /**
- * TextToSpeechManager — robust TTS playback with reliable completion callbacks
- * and single-speaker enforcement.
+ * TextToSpeechManager — robust TTS playback with reliable completion callbacks,
+ * single-speaker enforcement, and selection among 5 distinct voice choices.
  *
  * Prevents TTS from talking over itself, queueing duplicate stale speech,
  * or interfering with microphone listening.
@@ -32,16 +49,16 @@ class TextToSpeechManager(context: Context) {
     private val callbacks = ConcurrentHashMap<String, () -> Unit>()
     private val utteranceSequence = AtomicLong()
     private val activeUtteranceId = AtomicReference<String?>(null)
+    @Volatile private var currentVoiceChoice: VoiceChoice = VoiceChoice.SYSTEM_DEFAULT
 
     init {
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
-                tts?.setSpeechRate(1.0f)
-                tts?.setPitch(1.0f)
+                applyVoiceSettings(currentVoiceChoice)
                 setupProgressListener()
                 isReady = true
-                VoxynLogger.i("TTS ready", "TTS")
+                VoxynLogger.i("TTS ready (voice: ${currentVoiceChoice.displayName})", "TTS")
                 pendingSpeech?.let { text ->
                     val cb = pendingCallback
                     pendingSpeech = null
@@ -52,6 +69,40 @@ class TextToSpeechManager(context: Context) {
                 VoxynLogger.e("TTS init failed: $status", tag = "TTS")
                 completeCallbacks()
             }
+        }
+    }
+
+    fun getAvailableVoices(): List<VoiceChoice> = VoiceChoice.values().toList()
+
+    fun getVoiceChoice(): VoiceChoice = currentVoiceChoice
+
+    fun setVoiceChoice(choice: VoiceChoice) {
+        currentVoiceChoice = choice
+        applyVoiceSettings(choice)
+        VoxynLogger.i("TTS voice switched to: ${choice.displayName}", "TTS")
+    }
+
+    private fun applyVoiceSettings(choice: VoiceChoice) {
+        val engine = tts ?: return
+        engine.setPitch(choice.pitch)
+        engine.setSpeechRate(choice.speechRate)
+        try {
+            val available = engine.voices ?: emptySet()
+            if (choice.voiceFilter != null) {
+                val match = available.firstOrNull { v ->
+                    v.locale.language == Locale.US.language &&
+                    v.name.contains(choice.voiceFilter, ignoreCase = true) &&
+                    !v.isNetworkConnectionRequired
+                } ?: available.firstOrNull { v ->
+                    v.name.contains(choice.voiceFilter, ignoreCase = true)
+                }
+                if (match != null) {
+                    engine.voice = match
+                    VoxynLogger.d("Matched Android TTS voice: ${match.name}", "TTS")
+                }
+            }
+        } catch (e: Exception) {
+            VoxynLogger.w("Could not set specific voice: ${e.message}", "TTS")
         }
     }
 

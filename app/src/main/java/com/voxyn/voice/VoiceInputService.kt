@@ -44,6 +44,7 @@ class VoiceInputService : Service() {
     companion object {
         const val ACTION_START_LISTENING = "com.voxyn.voice.START_LISTENING"
         const val ACTION_STOP_LISTENING  = "com.voxyn.voice.STOP_LISTENING"
+        const val EXTRA_SESSION_ID       = "com.voxyn.voice.SESSION_ID"
         const val CHANNEL_ID             = "voxyn_voice"
         const val NOTIFICATION_ID        = 3002
 
@@ -61,12 +62,15 @@ class VoiceInputService : Service() {
     private val tts: TextToSpeechManager by inject()
     private val engineProvider: SpeechRecognizerEngineProvider by inject()
     private val parakeetModelManager: ParakeetModelManager by inject()
+    private val coordinator: VoiceSessionCoordinator by inject()
+    private val diagnostics: VoiceDiagnosticsManager by inject()
 
     private var activeEngine      : SpeechRecognizerEngine? = null
     private var audioManager      : AudioManager? = null
     private var audioFocusRequest : AudioFocusRequest? = null
     private var conversationWatchdog: Runnable? = null
     private var consecutiveFailures = 0
+    private var currentSessionId  : String = ""
 
     @Volatile private var isListening = false
     @Volatile private var stopping    = false
@@ -83,7 +87,9 @@ class VoiceInputService : Service() {
         stopping = false
         when (intent?.action) {
             ACTION_START_LISTENING -> {
-                VoxynLogger.i("ACTION_START_LISTENING received", "VOICE")
+                val sid = intent.getStringExtra(EXTRA_SESSION_ID)
+                currentSessionId = if (!sid.isNullOrBlank()) sid else coordinator.onWakeDetected()
+                VoxynLogger.i("ACTION_START_LISTENING received (session: $currentSessionId)", "VOICE")
                 mainHandler.postDelayed({ beginListening() }, START_DELAY_MS)
             }
             ACTION_STOP_LISTENING -> resumeWakeAndStop()
@@ -122,21 +128,29 @@ class VoiceInputService : Service() {
         val recognizerEngine = engineProvider.currentEngine()
         activeEngine = recognizerEngine
         if (!recognizerEngine.start(engineListener)) {
-            mainHandler.post {
-                if (stopping) return@post
-                isListening = false
-                activeEngine = null
-                releaseAudioFocus()
-                updateNotification("VOXYN — voice unavailable")
-                tts.speak("My speech engine is not ready yet.")
-                mainHandler.postDelayed({ resumeWakeAndStop() }, 1_500L)
+            engineProvider.reportEngineFailure(recognizerEngine, "Engine start returned false")
+            val fallbackEngine = engineProvider.getFallbackEngine()
+            activeEngine = fallbackEngine
+            if (!fallbackEngine.start(engineListener)) {
+                mainHandler.post {
+                    if (stopping) return@post
+                    isListening = false
+                    activeEngine = null
+                    releaseAudioFocus()
+                    updateNotification("VOXYN — voice unavailable")
+                    tts.speak("My speech engine is not ready yet.")
+                    mainHandler.postDelayed({ resumeWakeAndStop() }, 1_500L)
+                }
+                return
             }
+            VoxynLogger.i("Command listening started via fallback (${fallbackEngine::class.simpleName})", "VOICE")
             return
         }
+        coordinator.onListeningStarted(currentSessionId, recognizerEngine::class.simpleName ?: "Engine")
         VoxynLogger.i("Command listening started (${recognizerEngine::class.simpleName})", "VOICE")
     }
 
-    private val engineListener = object : SpeechRecognizerEngine.Listener {
+    private val engineListener: SpeechRecognizerEngine.Listener = object : SpeechRecognizerEngine.Listener {
         override fun onSpeechDetected() {
             mainHandler.post {
                 if (!stopping) updateNotification("VOXYN — listening...")
@@ -150,10 +164,22 @@ class VoiceInputService : Service() {
             }
         }
 
-        override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long) {
+        override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray?) {
             mainHandler.post {
                 if (stopping) return@post
-                handleResult(text)
+                val gateOutcome = coordinator.onSpeechResult(currentSessionId, text, audioDurationMs, audioSamples)
+                when (gateOutcome) {
+                    is com.voxyn.security.GateResult.Authorized -> {
+                        handleResult(text)
+                    }
+                    is com.voxyn.security.GateResult.Denied -> {
+                        VoxynLogger.w("Voice command denied: ${gateOutcome.reason}", "VOICE")
+                        updateNotification("VOXYN — voice not recognized")
+                        tts.speak(gateOutcome.userFeedback) {
+                            endSessionWithStandingBy()
+                        }
+                    }
+                }
             }
         }
 
@@ -165,9 +191,21 @@ class VoiceInputService : Service() {
         }
 
         override fun onError(message: String) {
+            val listenerInstance = this
             VoxynLogger.w("Command STT error: $message", "VOICE")
             mainHandler.post {
                 if (stopping) return@post
+                val current = activeEngine
+                if (current is SherpaParakeetRecognizer) {
+                    engineProvider.reportEngineFailure(current, message)
+                    current.stop()
+                    val fallback = engineProvider.getFallbackEngine()
+                    activeEngine = fallback
+                    VoxynLogger.i("Attempting in-session fallback to VoskCommandRecognizer after error: $message", "VOICE")
+                    if (fallback.start(listenerInstance)) {
+                        return@post
+                    }
+                }
                 handleSilence("error")
             }
         }
@@ -279,6 +317,7 @@ class VoiceInputService : Service() {
         if (stopping) return
         cancelWatchdog()
         session.end()
+        coordinator.onSessionEnded()
         updateNotification("VOXYN — say Hey VOXYN")
         // Do not resume the wake recognizer until the spoken status is finished,
         // otherwise it can hear VOXYN's own voice as a wake phrase.

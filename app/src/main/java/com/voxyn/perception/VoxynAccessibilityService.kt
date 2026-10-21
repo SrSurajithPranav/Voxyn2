@@ -128,6 +128,9 @@ class VoxynAccessibilityService : AccessibilityService() {
         val textContent = if (root != null) extractAllText(root).joinToString("\n") else "No screen text captured"
 
         scope.launch {
+            if (textContent.isNotBlank() && textContent != "No screen text captured") {
+                memory.saveNote("Screen note: $textContent")
+            }
             memory.recordOutcome("REMEMBER_THIS", true)
         }
 

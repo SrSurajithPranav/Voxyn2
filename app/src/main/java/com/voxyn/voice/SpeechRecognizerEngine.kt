@@ -32,8 +32,8 @@ interface SpeechRecognizerEngine {
         /** Partial/streaming transcript, when the engine can provide one. */
         fun onPartial(text: String)
 
-        /** A complete spoken command. */
-        fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long)
+        /** A complete spoken command, with optional audio samples for speaker verification. */
+        fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray? = null)
 
         /** The engine captured audio but no usable speech was found. */
         fun onNoSpeech()

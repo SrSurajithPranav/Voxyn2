@@ -134,7 +134,10 @@ class IntentRouter {
             Regex("bluetooth\\s*(off|disable)", RegexOption.IGNORE_CASE)
         )),
 
-        // ─── Volume ────────────────────────────────────────────────────
+        IntentDef("SET_VOLUME", 0.95f, listOf(
+            Regex("(?:set|change|adjust)\\s+(?:the\\s+)?volume\\s+(?:to\\s+)?(\\d+)(?:\\s*(?:percent|%))?", RegexOption.IGNORE_CASE),
+            Regex("(?:set|change|adjust)\\s+(?:the\\s+)?volume\\s+(?:to\\s+)?(zero|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?:\\s*(?:percent|%))?", RegexOption.IGNORE_CASE)
+        ), mapOf("level" to 1)),
         IntentDef("VOLUME_UP", 0.92f, listOf(
             Regex("volume\\s*(up|increase|louder|raise)", RegexOption.IGNORE_CASE),
             Regex("(increase|raise|turn\\s*up)\\s*(the\\s*)?volume", RegexOption.IGNORE_CASE),

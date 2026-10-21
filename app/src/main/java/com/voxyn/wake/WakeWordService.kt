@@ -59,10 +59,13 @@ class WakeWordService : Service() {
         private const val MODEL_RETRY_MS  = 10_000L
         private const val TTS_MAX_WAIT_MS = 5_000L
 
-        private const val GRAMMAR = """["hey voxyn", "hi voxyn", "okay voxyn", "voxyn", "[unk]"]"""
+        private const val GRAMMAR = """["hey voxyn", "hi voxyn", "okay voxyn", "ok voxyn", "voxyn", "hey voxin", "voxin", "[unk]"]"""
 
-        private val WAKE_VARIANTS = listOf("hey voxyn", "hi voxyn", "okay voxyn", "voxyn")
-        private val WAKE_TRIGGER_WORDS = listOf("hey", "hi", "okay", "voxyn")
+        val WAKE_REGEX = Regex("""\b(?:hey\s+voxyn|hi\s+voxyn|okay\s+voxyn|ok\s+voxyn|voxyn|hey\s+voxin|voxin)\b""", RegexOption.IGNORE_CASE)
+
+        fun isWakeTrigger(text: String): Boolean =
+            text.isNotBlank() && WAKE_REGEX.containsMatchIn(text)
+
         private val ACTIVATION_RESPONSES = listOf("Yes?", "Listening.", "What do you need?", "Go ahead.", "I'm here.")
     }
 
@@ -72,6 +75,7 @@ class WakeWordService : Service() {
     private val session: ConversationSession by inject()
     private val modelProvider: VoskModelProvider by inject()
     private val parakeetModelManager: ParakeetModelManager by inject()
+    private val coordinator: com.voxyn.voice.VoiceSessionCoordinator by inject()
 
     private var model        : Model? = null
     private var recognizer   : Recognizer? = null
@@ -167,7 +171,7 @@ class WakeWordService : Service() {
     private fun startDetection() {
         if (stopped || isDetecting || session.isActive) return
         // Require both model and recognizer to be ready before starting
-        val m = model ?: return
+        if (model == null) return
         val rec = recognizer ?: return
         permissionBlocked = false
         isDetecting = true
@@ -247,14 +251,11 @@ class WakeWordService : Service() {
     }
 
     /**
-     * The bundled small Vosk model can't hear "voxyn" — with the wake grammar, the
-     * only tokens it can ever emit are hey/hi/okay/voxyn plus [unk] for out-of-
-     * vocabulary speech. Any result containing a trigger word is a wake attempt.
+     * Checks if the transcribed text contains a valid wake phrase.
+     * Requires the complete wake phrase with word boundaries to prevent
+     * false triggers on generic conversational words (e.g. "hey", "hi", "okay").
      */
-    private fun isWakeTrigger(text: String): Boolean {
-        if (WAKE_VARIANTS.any { text.contains(it) }) return true
-        return WAKE_TRIGGER_WORDS.any { text.contains(it) }
-    }
+    internal fun isWakeTrigger(text: String): Boolean = Companion.isWakeTrigger(text)
 
     private fun onDetectionFailed() {
         isDetecting = false
@@ -265,6 +266,7 @@ class WakeWordService : Service() {
 
     private fun onWakeTriggered() {
         session.end()
+        val sessionId = coordinator.onWakeDetected()
         updateNotification("VOXYN — waking up...")
         // Pre-load the command recognizer while the activation line is spoken so
         // the mic is ready from the user's very first word.
@@ -272,13 +274,13 @@ class WakeWordService : Service() {
             runCatching { parakeetModelManager.getRecognizer() }
                 .onSuccess { VoxynLogger.i("Parakeet recognizer pre-loaded on wake", "WAKE") }
         }
-        speakActivationThenListen()
+        speakActivationThenListen(sessionId)
     }
 
-    private fun speakActivationThenListen() {
+    private fun speakActivationThenListen(sessionId: String) {
         requestAudioFocus()
         val phrase = ACTIVATION_RESPONSES.random()
-        VoxynLogger.i("Activation: \"$phrase\"", "WAKE")
+        VoxynLogger.i("Activation: \"$phrase\" (session: $sessionId)", "WAKE")
         tts.speak(phrase)
         scope.launch {
             val deadline = System.currentTimeMillis() + TTS_MAX_WAIT_MS
@@ -286,18 +288,21 @@ class WakeWordService : Service() {
                 delay(100L)
             }
             releaseAudioFocus()
-            startVoiceInput()
+            startVoiceInput(sessionId)
         }
     }
 
-    private fun startVoiceInput() {
+    private fun startVoiceInput(sessionId: String? = null) {
         try {
             startForegroundService(
                 Intent(this, VoiceInputService::class.java).apply {
                     action = VoiceInputService.ACTION_START_LISTENING
+                    if (sessionId != null) {
+                        putExtra(VoiceInputService.EXTRA_SESSION_ID, sessionId)
+                    }
                 }
             )
-            VoxynLogger.i("VoiceInputService started", "WAKE")
+            VoxynLogger.i("VoiceInputService started (session: $sessionId)", "WAKE")
         } catch (e: Exception) {
             VoxynLogger.e("Failed to start VoiceInputService: ${e.message}", tag = "WAKE")
             mainHandler.postDelayed({ startDetection() }, 2_000L)

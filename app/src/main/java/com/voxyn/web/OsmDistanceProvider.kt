@@ -49,7 +49,7 @@ class OsmDistanceProvider : DistanceProvider {
             requestMethod = "GET"
             connectTimeout = 8000
             readTimeout = 12000
-            setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant)")
+            setRequestProperty("User-Agent", "VOXYN/1.0 (Android assistant; contact@voxyn.app)")
         }
         if (conn.responseCode != 200) {
             VoxynLogger.w("Nominatim HTTP ${conn.responseCode}", "WEB")

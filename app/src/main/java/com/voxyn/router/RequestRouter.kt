@@ -58,8 +58,10 @@ class RequestRouter {
         val weather = Regex("^what('s| is)? the weather(?: like)? in (.+)$").find(t)
             ?: Regex("^weather(?: like)? in (.+)$").find(t)
             ?: Regex("^(?:how (hot|cold|warm) is it) in (.+)$").find(t)
+            ?: Regex("^what('s| is)? the weather(?: like)?(?: today)?(?: outside)?$").find(t)
+            ?: Regex("^weather(?: today)?$").find(t)
         if (weather != null) {
-            val location = weather.groupValues.last().trim().trimEnd('?', '.', '!')
+            val location = if (t.contains(" in ")) weather.groupValues.last().trim().trimEnd('?', '.', '!') else "local"
             return RouteDecision(RouteType.WEATHER, mapOf("location" to location), 0.92f)
         }
 

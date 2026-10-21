@@ -73,6 +73,7 @@ class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
 
         // Vosk emits [unk] for out-of-vocabulary words; drop them before anything else.
         t = t.replace("[unk]", " ").replace(Regex("\\s+"), " ").trim()
+        t = t.trimEnd('.', '?', '!', ',', ';').trim()
 
         // Wake-word residue
         t = t.replace(Regex("^\\s*(hey|hi|okay)\\s+voxyn[,.!]?\\s*"), "")
@@ -88,6 +89,19 @@ class SpeechNormalizer(private val appNameResolver: AppNameResolver) {
                 t = t.replace(pattern, rule.canonical)
             }
         }
+
+        // Spoken numbers to digits
+        t = t.replace(Regex("\\bzero\\b"), "0")
+            .replace(Regex("\\bten\\b"), "10")
+            .replace(Regex("\\btwenty\\b"), "20")
+            .replace(Regex("\\bthirty\\b"), "30")
+            .replace(Regex("\\bforty\\b"), "40")
+            .replace(Regex("\\bfifty\\b"), "50")
+            .replace(Regex("\\bsixty\\b"), "60")
+            .replace(Regex("\\bseventy\\b"), "70")
+            .replace(Regex("\\beighty\\b"), "80")
+            .replace(Regex("\\bninety\\b"), "90")
+            .replace(Regex("\\bhundred\\b"), "100")
 
         // "open the/a X" and trailing politeness
         t = t.replace(Regex("^open\\s+(?:the|a|an)\\s+"), "open ")

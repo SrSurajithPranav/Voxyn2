@@ -56,6 +56,20 @@ class VoskCommandRecognizer(
             "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
             "percent", "degrees"
         )
+
+        private val COMMAND_PHRASES = listOf(
+            "turn on bluetooth", "turn off bluetooth",
+            "turn on wifi", "turn off wifi",
+            "turn on flashlight", "turn off flashlight", "turn on torch", "turn off torch",
+            "set volume to thirty percent", "set volume to fifty percent", "set volume",
+            "increase volume", "decrease volume", "mute volume",
+            "what is the weather today", "what is the weather", "weather today",
+            "open youtube", "open settings", "open camera", "open whatsapp", "open spotify",
+            "take a screenshot", "lock screen", "lock phone",
+            "play music", "pause music", "next track", "previous track",
+            "set a timer", "set an alarm", "stop timer", "cancel alarm",
+            "go back", "go home", "scroll down", "scroll up"
+        )
     }
 
     @Volatile
@@ -115,33 +129,47 @@ class VoskCommandRecognizer(
                 AudioFormat.ENCODING_PCM_16BIT
             ).coerceAtLeast(4096)
         )
+        val capturedAudio = ArrayList<Short>(48000)
 
         while (isActive && isRunning) {
             val read = record.read(buffer, 0, buffer.size)
             if (read <= 0) continue
             val now = System.currentTimeMillis()
 
+            if (capturedAudio.size < 160_000) {
+                for (i in 0 until read) {
+                    capturedAudio.add(buffer[i])
+                }
+            }
+
             if (activeRecognizer.acceptWaveForm(buffer, read)) {
                 val text = JSONObject(activeRecognizer.result).optString("text", "").trim()
                 if (text.isNotEmpty()) {
                     finalText = text
-                    hadSpeech = true
-                    lastSpeechTime = now
                     VoxynLogger.i("ASR: Vosk final: \"$text\"", "ASR")
                     break
                 }
             } else {
                 val partial = JSONObject(activeRecognizer.getPartialResult()).optString("partial", "").trim()
                 if (partial.isNotEmpty()) {
-                    lastPartial = partial
-                    hadSpeech = true
-                    lastSpeechTime = now
-                    listener?.onPartial(partial)
+                    // Crucial: Only reset the silence timer when NEW partial speech arrives.
+                    // Resetting on every tick with an unchanged partial causes the loop to hang.
+                    if (partial != lastPartial) {
+                        lastPartial = partial
+                        lastSpeechTime = now
+                        hadSpeech = true
+                        listener?.onPartial(partial)
+                    }
                 }
             }
 
             if (hadSpeech && now - lastSpeechTime >= ENDPOINT_SILENCE_MS) {
-                try { activeRecognizer.result } catch (_: Exception) {}
+                val epText = runCatching {
+                    JSONObject(activeRecognizer.result).optString("text", "").trim()
+                }.getOrDefault("")
+                if (epText.isNotEmpty()) {
+                    finalText = epText
+                }
                 break
             }
             if (!hadSpeech && now - startTime >= SILENCE_TIMEOUT_MS) {
@@ -150,10 +178,23 @@ class VoskCommandRecognizer(
             delay(20L)
         }
 
+            // Flush final decoder result if finalText was not yet obtained
+            if (finalText.isNullOrEmpty()) {
+                val flushed = runCatching {
+                    JSONObject(activeRecognizer.finalResult).optString("text", "").trim()
+                }.getOrDefault("")
+                if (flushed.isNotEmpty()) {
+                    finalText = flushed
+                }
+            }
+
             val best = finalText ?: lastPartial.takeIf { it.isNotEmpty() }
-            if (best != null) {
-                VoxynLogger.i("ASR: transcript = \"$best\"", "ASR")
-                listener?.onResult(best, 0L, 0L)
+            val meaningful = best?.replace("[unk]", "")?.trim()
+            if (!meaningful.isNullOrBlank()) {
+                val duration = System.currentTimeMillis() - startTime
+                val samples = ShortArray(capturedAudio.size) { capturedAudio[it] }
+                VoxynLogger.i("ASR: transcript = \"$meaningful\"", "ASR")
+                listener?.onResult(meaningful, duration, 0L, samples)
             } else {
                 listener?.onNoSpeech()
             }
@@ -169,10 +210,11 @@ class VoskCommandRecognizer(
         }
     }
 
-    /** Grammar-biased word list so the small Vosk model hears VOXYN vocabulary. */
+    /** Grammar-biased word and phrase list so the small Vosk model hears VOXYN vocabulary. */
     private fun buildCommandGrammar(): String = runCatching {
         val words = linkedSetOf<String>()
         words.add("[unk]")
+        words.addAll(COMMAND_PHRASES)
         words.addAll(COMMAND_WORDS)
         words.addAll(NUMBER_WORDS)
         words.addAll(appCatalog.grammarTerms())
