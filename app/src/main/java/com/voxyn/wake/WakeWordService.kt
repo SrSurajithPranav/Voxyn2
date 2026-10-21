@@ -139,6 +139,16 @@ class WakeWordService : Service() {
             if (m != null) {
                 if (stopped) return@launch
                 model = m
+                // Create the Recognizer once when the model is ready and cache it for
+                // the service lifetime. Creating/destroying on every detection cycle
+                // causes Vosk heap corruption (double-free in vosk_recognizer_free).
+                if (recognizer == null) {
+                    recognizer = runCatching {
+                        Recognizer(m, SAMPLE_RATE.toFloat(), GRAMMAR)
+                    }.onFailure {
+                        VoxynLogger.e("Failed to create Vosk recognizer: ${it.message}", tag = "WAKE")
+                    }.getOrNull()
+                }
                 VoxynLogger.i("Vosk model loaded", "WAKE")
                 mainHandler.post { startDetection() }
             } else {
@@ -155,11 +165,17 @@ class WakeWordService : Service() {
     // ─── Vosk detection loop ──────────────────────────────────────────
 
     private fun startDetection() {
-        val m = model ?: return
         if (stopped || isDetecting || session.isActive) return
+        // Require both model and recognizer to be ready before starting
+        val m = model ?: return
+        val rec = recognizer ?: return
         permissionBlocked = false
         isDetecting = true
         updateNotification("VOXYN — say Hey VOXYN")
+
+        // Reset recognizer state from any previous session so old audio doesn't
+        // bleed into the new detection cycle.
+        runCatching { rec.reset() }
 
         detectJob?.cancel()
         detectJob = scope.launch {
@@ -186,8 +202,6 @@ class WakeWordService : Service() {
                     return@launch
                 }
 
-                val rec = Recognizer(m, SAMPLE_RATE.toFloat(), GRAMMAR)
-                recognizer = rec
                 record.startRecording()
 
                 val buffer = ShortArray(bufferSize)
@@ -223,8 +237,10 @@ class WakeWordService : Service() {
                 onDetectionFailed()
             } finally {
                 releaseAudioRecord()
-                try { recognizer?.close() } catch (_: Exception) {}
-                recognizer = null
+                // Do NOT close the recognizer here — it is a long-lived cached object.
+                // Closing (and re-creating) it on every detection cycle causes
+                // heap corruption in vosk_recognizer_free (double-free / use-after-free).
+                // The recognizer is closed exactly once in stopAll(), before the model.
                 if (isDetecting) isDetecting = false
             }
         }
@@ -292,14 +308,18 @@ class WakeWordService : Service() {
         isDetecting = false
         detectJob?.cancel()
         releaseAudioRecord()
-        try { recognizer?.close() } catch (_: Exception) {}
-        recognizer = null
+        // Do NOT close the recognizer here — it is reused across detection cycles.
+        // It will be closed (before the model) in stopAll().
         VoxynLogger.i("Vosk detection stopped", "WAKE")
     }
 
     private fun stopAll() {
         stopDetection()
         releaseAudioFocus()
+        // Close Recognizer BEFORE Model — the Recognizer holds a reference to
+        // model-internal native data, so freeing the model first corrupts the heap.
+        try { recognizer?.close() } catch (_: Exception) {}
+        recognizer = null
         try { model?.close() } catch (_: Exception) {}
         model = null
         VoxynLogger.i("All wake activity stopped", "WAKE")

@@ -87,7 +87,7 @@ val appModule = module {
     single { WorldTimeProvider() }
     single { LocalKnowledgeProvider() }
     single { LocalModelManager(androidContext()) }
-    single { LocalLlmProvider(androidContext(), get()) }
+    single<com.voxyn.ai.AiProvider> { LocalLlmProvider(androidContext(), get()) }
 
     // ─── Hybrid general intelligence: local → web → cloud ───────────────────────
     single<com.voxyn.ai.GeneralQueryResolver> {
