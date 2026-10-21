@@ -40,6 +40,12 @@ class VoskModelProvider(private val context: Context) {
     @Synchronized
     fun isExtracted(): Boolean = File(modelDir(), "am/final.mdl").exists()
 
+    @Synchronized
+    fun invalidateModel() {
+        try { cachedModel?.close() } catch (_: Exception) {}
+        cachedModel = null
+    }
+
     private fun modelDir(): File = File(context.filesDir, TARGET_DIR)
 
     private fun ensureExtracted(): String {

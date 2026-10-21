@@ -11,12 +11,12 @@ class LocalKnowledgeProvider {
     fun joke(): String = JOKES.random()
 
     /** Used when no local/web/cloud provider could answer a general question. */
-    fun cantFind(): String = "I couldn't find an answer to that. Try asking it a different way."
+    fun cantFind(): String = "I couldn't find an answer to that, Sir. Try asking it a different way."
 
     fun offlineNotice(): String = OFFLINE_NOTICE
 
     companion object {
-        private val OFFLINE_NOTICE = "I can't access current information right now."
+        private val OFFLINE_NOTICE = "I can't access current information right now, Sir."
 
         private val JOKES = listOf(
             "Why do programmers prefer dark mode? Because light attracts bugs.",

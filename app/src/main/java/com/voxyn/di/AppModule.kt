@@ -131,7 +131,7 @@ val appModule = module {
 
     // ─── Capabilities ──────────────────────────────────────────────────────────
     single { SystemCapability(androidContext()) }
-    single { AppCapability(get()) }
+    single { AppCapability(androidContext(), get()) }
     single { CommunicationCapability(androidContext(), get(), get()) }
     single { MediaCapability(androidContext()) }
     single { ClockCapability(androidContext()) }

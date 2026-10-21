@@ -1,6 +1,7 @@
 package com.voxyn
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -22,6 +23,7 @@ import com.voxyn.ui.theme.VoxynBg
 import com.voxyn.ui.theme.VoxynTheme
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.voice.VoiceInputService
 import com.voxyn.wake.WakeWordService
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
@@ -171,6 +173,22 @@ class MainActivity : ComponentActivity() {
         } else {
             startVoxynServices()
             checkOverlayPermission()
+            checkBatteryOptimization()
+        }
+    }
+
+    private fun checkBatteryOptimization() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+                VoxynLogger.i("Prompted user to ignore battery optimizations for 24x7 operation", "MAIN")
+            } catch (e: Exception) {
+                VoxynLogger.w("Could not launch ignore battery optimizations intent: ${e.message}", "MAIN")
+            }
         }
     }
 
@@ -198,11 +216,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         try {
-            startForegroundService(Intent(this, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_START
+            startForegroundService(Intent(this, VoiceInputService::class.java).apply {
+                action = VoiceInputService.ACTION_START_LISTENING
             })
+            VoxynLogger.i("VoiceInputService started from MainActivity (Always-Listening Mode)", "MAIN")
         } catch (e: Exception) {
-            VoxynLogger.e("Failed to start WakeWordService: ${e.message}", tag = "MAIN")
+            VoxynLogger.e("Failed to start VoiceInputService: ${e.message}", tag = "MAIN")
         }
     }
 
@@ -215,11 +234,11 @@ class MainActivity : ComponentActivity() {
         }
         try {
             startForegroundService(
-                Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_START_LISTENING
+                Intent(this, VoiceInputService::class.java).apply {
+                    action = VoiceInputService.ACTION_START_LISTENING
                 }
             )
-            VoxynLogger.i("Mic button pressed — sent ACTION_START_LISTENING", "MAIN")
+            VoxynLogger.i("Mic button pressed — sent ACTION_START_LISTENING to VoiceInputService", "MAIN")
         } catch (e: Exception) {
             VoxynLogger.e("Voice input start failed: ${e.message}", tag = "MAIN")
             Toast.makeText(this, "Couldn't start voice: ${e.message}", Toast.LENGTH_LONG).show()

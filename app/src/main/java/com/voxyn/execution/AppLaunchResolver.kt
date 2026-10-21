@@ -40,6 +40,12 @@ class AppLaunchResolver(
         return PhaseResult.Success("Opened $displayName")
     }
 
+    fun resolvePackage(appName: String): String? {
+        if (appName.isBlank()) return null
+        val entry = catalog.findBest(appName)
+        return entry?.packageName ?: knownPackage(catalog.canonical(appName))
+    }
+
     private fun knownPackage(canonicalName: String): String? = when (canonicalName) {
         "youtube" -> "com.google.android.youtube"
         "whatsapp" -> "com.whatsapp"

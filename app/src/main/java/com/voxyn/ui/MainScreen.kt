@@ -23,9 +23,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.voxyn.security.SpeakerProfile
+import com.voxyn.voice.VoiceOption
 import com.voxyn.security.VoiceEnrollmentState
 import com.voxyn.ui.theme.*
 import com.voxyn.voice.AsrDownloadState
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,6 +56,8 @@ fun MainScreen(
 
     var showDiagnostics by remember { mutableStateOf(false) }
     var showVoiceProfilesDialog by remember { mutableStateOf(false) }
+    var showVoiceSelectorDialog by remember { mutableStateOf(false) }
+    val activeVoiceOption by viewModel.activeVoiceOption.collectAsState()
     var selectedVoice by remember { mutableStateOf(viewModel.currentVoice) }
 
     Box(
@@ -75,13 +81,14 @@ fun MainScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedButton(
-                    onClick = { selectedVoice = viewModel.cycleVoice() },
+                    onClick = { showVoiceSelectorDialog = true },
                     modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, VoxynCyan.copy(alpha = 0.4f)),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                 ) {
-                    Text("TTS: ${selectedVoice.displayName}", color = VoxynCyan, fontSize = 11.sp, maxLines = 1)
+                    val currentTitle = activeVoiceOption?.displayName ?: selectedVoice.displayName
+                    Text("🗣️ $currentTitle", color = VoxynCyan, fontSize = 11.sp, maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = {
@@ -96,7 +103,7 @@ fun MainScreen(
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
                 ) {
-                    val label = if (enrolledProfiles.isEmpty()) "🎙️ Add My Voice" else "🎙️ Voice ID (${enrolledProfiles.size}/5)"
+                    val label = if (enrolledProfiles.isEmpty()) "🎙️ Add My Voice" else "🎙️ Voice ID (${enrolledProfiles.size}/25)"
                     Text(
                         label,
                         color = if (enrolledProfiles.isEmpty()) WARN_COLOR else SUCCESS_COLOR,
@@ -163,14 +170,38 @@ fun MainScreen(
             )
         }
 
+        if (showVoiceSelectorDialog) {
+            VoiceSelectorDialog(
+                options = viewModel.getAllVoiceOptions(),
+                activeOption = activeVoiceOption,
+                onSelect = { option ->
+                    viewModel.selectVoiceOption(option)
+                    showVoiceSelectorDialog = false
+                },
+                onPreview = { option -> viewModel.previewVoiceOption(option) },
+                onOpenProfiles = {
+                    showVoiceSelectorDialog = false
+                    viewModel.clearEnrollmentStatus()
+                    showVoiceProfilesDialog = true
+                },
+                onDismiss = { showVoiceSelectorDialog = false }
+            )
+        }
+
         if (showVoiceProfilesDialog) {
             VoiceProfilesDialog(
                 profiles = enrolledProfiles,
                 enrollmentState = enrollmentState,
+                activeVoiceOption = activeVoiceOption,
                 onEnroll = { name, isOwner -> viewModel.startEnrollment(name, isOwner) },
+                onEnrollFromFile = { name, isOwner, uri -> viewModel.startEnrollmentFromFile(name, isOwner, uri) },
+                onAddSample = { profileId -> viewModel.addSample(profileId) },
+                onAddSampleFromFile = { profileId, uri -> viewModel.addSampleFromFile(profileId, uri) },
                 onCancelEnroll = { viewModel.cancelEnrollment() },
                 onTestVoice = { viewModel.testVoiceMatch() },
                 onDeleteProfile = { id -> viewModel.deleteProfile(id) },
+                onSelectVoice = { profile -> viewModel.selectClonedVoice(profile) },
+                onPreviewVoice = { profile -> viewModel.previewProfileVoice(profile) },
                 onClearStatus = { viewModel.clearEnrollmentStatus() },
                 onDismiss = {
                     viewModel.cancelEnrollment()
@@ -494,15 +525,40 @@ private val MicIcon: ImageVector by lazy {
 private fun VoiceProfilesDialog(
     profiles: List<SpeakerProfile>,
     enrollmentState: VoiceEnrollmentState,
+    activeVoiceOption: VoiceOption?,
     onEnroll: (name: String, isOwner: Boolean) -> Unit,
+    onEnrollFromFile: (name: String, isOwner: Boolean, uri: Uri) -> Unit,
+    onAddSample: (profileId: String) -> Unit,
+    onAddSampleFromFile: (profileId: String, uri: Uri) -> Unit,
     onCancelEnroll: () -> Unit,
     onTestVoice: () -> Unit,
     onDeleteProfile: (id: String) -> Unit,
+    onSelectVoice: (profile: SpeakerProfile) -> Unit,
+    onPreviewVoice: (profile: SpeakerProfile) -> Unit,
     onClearStatus: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var profileName by remember { mutableStateOf(if (profiles.isEmpty()) "Owner" else "") }
     var isOwner by remember { mutableStateOf(profiles.isEmpty()) }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onEnrollFromFile(profileName, isOwner, uri)
+        }
+    }
+
+    var targetProfileForSample by remember { mutableStateOf<String?>(null) }
+    val sampleFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        val target = targetProfileForSample
+        if (uri != null && target != null) {
+            onAddSampleFromFile(target, uri)
+            targetProfileForSample = null
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -520,7 +576,7 @@ private fun VoiceProfilesDialog(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "${profiles.size}/5 Enrolled Profiles",
+                        "${profiles.size}/25 Enrolled Profiles",
                         color = VoxynCyan,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
@@ -591,57 +647,127 @@ private fun VoiceProfilesDialog(
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Row(
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                profile.name,
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
-                                            )
-                                            if (profile.isOwner) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .background(
-                                                            VoxynCyan.copy(alpha = 0.2f),
-                                                            RoundedCornerShape(4.dp)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    profile.name,
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                )
+                                                if (profile.isOwner) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(
+                                                                VoxynCyan.copy(alpha = 0.2f),
+                                                                RoundedCornerShape(4.dp)
+                                                            )
+                                                            .border(0.5.dp, VoxynCyan, RoundedCornerShape(4.dp))
+                                                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            "OWNER",
+                                                            color = VoxynCyan,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold
                                                         )
-                                                        .border(0.5.dp, VoxynCyan, RoundedCornerShape(4.dp))
-                                                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                                                ) {
-                                                    Text(
-                                                        "OWNER",
-                                                        color = VoxynCyan,
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                    }
                                                 }
                                             }
+                                            val dateStr = runCatching {
+                                                SimpleDateFormat("MMM dd, yyyy", Locale.US).format(Date(profile.enrolledAtMs))
+                                            }.getOrDefault("Recently")
+                                            Text(
+                                                "${profile.sampleVoiceprints.size} sample(s) (max 25) • 32-dim MFCC • Enrolled $dateStr",
+                                                color = DIM_COLOR,
+                                                fontSize = 10.sp
+                                            )
+                                            Text(
+                                                "Acoustic Clone: Pitch ${String.format(Locale.US, "%.2f", profile.pitch)}x • Speed ${String.format(Locale.US, "%.2f", profile.speechRate)}x • Timbre: ${profile.timbre.replaceFirstChar { it.uppercase() }}",
+                                                color = VoxynCyan.copy(alpha = 0.85f),
+                                                fontSize = 10.sp,
+                                                fontFamily = FontFamily.Monospace
+                                            )
                                         }
-                                        val dateStr = runCatching {
-                                            SimpleDateFormat("MMM dd, yyyy", Locale.US).format(Date(profile.enrolledAtMs))
-                                        }.getOrDefault("Recently")
-                                        Text(
-                                            "128-dim voiceprint • Enrolled $dateStr",
-                                            color = DIM_COLOR,
-                                            fontSize = 10.sp
-                                        )
+                                        IconButton(
+                                            onClick = { onDeleteProfile(profile.id) },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Text("🗑️", fontSize = 14.sp)
+                                        }
                                     }
-                                    IconButton(
-                                        onClick = { onDeleteProfile(profile.id) },
-                                        modifier = Modifier.size(32.dp)
+
+                                    // Add Samples Row
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text("🗑️", fontSize = 14.sp)
+                                        OutlinedButton(
+                                            onClick = { onAddSample(profile.id) },
+                                            border = BorderStroke(1.dp, VoxynCyan.copy(alpha = 0.4f)),
+                                            shape = RoundedCornerShape(4.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("+ Mic Sample", color = VoxynCyan, fontSize = 10.sp)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                targetProfileForSample = profile.id
+                                                sampleFilePickerLauncher.launch("audio/*")
+                                            },
+                                            border = BorderStroke(1.dp, VoxynCyan.copy(alpha = 0.4f)),
+                                            shape = RoundedCornerShape(4.dp),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("+ Audio File Sample", color = VoxynCyan, fontSize = 10.sp)
+                                        }
+                                    }
+
+                                    // Voice Clone Action Row
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val isCurrentSpeakingVoice = activeVoiceOption?.profileId == profile.id
+                                        Button(
+                                            onClick = { onSelectVoice(profile) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isCurrentSpeakingVoice) SUCCESS_COLOR else VoxynCyan
+                                            ),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                if (isCurrentSpeakingVoice) "✓ Active Voice" else "🔊 Reply in ${profile.name}'s Voice",
+                                                color = VoxynBg,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        OutlinedButton(
+                                            onClick = { onPreviewVoice(profile) },
+                                            border = BorderStroke(1.dp, VoxynCyan.copy(alpha = 0.5f)),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("▶ Preview", color = VoxynCyan, fontSize = 11.sp)
+                                        }
                                     }
                                 }
                             }
@@ -661,7 +787,7 @@ private fun VoiceProfilesDialog(
                 }
 
                 // Add Profile Section
-                if (profiles.size < 5) {
+                if (profiles.size < 25) {
                     HorizontalDivider(color = Color(0xFF263238))
                     Text(
                         "ENROLL NEW VOICE",
@@ -672,7 +798,7 @@ private fun VoiceProfilesDialog(
                     )
 
                     Text(
-                        "Enter your name and tap Record. Speak naturally into the microphone for 3 seconds (e.g. \"Hey Voxyn, what's on my schedule today?\")",
+                        "Enter your name or a friend's name and record with the mic (3s) or select an audio file (.wav, .mp3, .m4a). VOXYN extracts 32-dim MFCC acoustic signatures, clones vocal timbre, and matches against up to 25 profiles & samples!",
                         color = Color(0xFF90A4AE),
                         fontSize = 11.sp,
                         lineHeight = 15.sp
@@ -717,18 +843,33 @@ private fun VoiceProfilesDialog(
                     // Enrollment state reactive cards
                     when (enrollmentState) {
                         is VoiceEnrollmentState.Idle -> {
-                            Button(
-                                onClick = { onEnroll(profileName, isOwner) },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = VoxynCyan),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    "🎙️ Record Voice & Enroll (3s)",
-                                    color = VoxynBg,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { onEnroll(profileName, isOwner) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = VoxynCyan),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        "🎙️ Record Voice & Enroll (3s)",
+                                        color = VoxynBg,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = { audioPickerLauncher.launch("audio/*") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, VoxynCyan),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        "📁 Import Audio File (.wav, .mp3, .m4a)",
+                                        color = VoxynCyan,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
                         }
                         is VoiceEnrollmentState.Recording -> {
@@ -907,6 +1048,220 @@ private fun VoiceProfilesDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Close", color = VoxynCyan)
+            }
+        }
+    )
+}
+
+@Composable
+fun VoiceSelectorDialog(
+    options: List<VoiceOption>,
+    activeOption: VoiceOption?,
+    onSelect: (VoiceOption) -> Unit,
+    onPreview: (VoiceOption) -> Unit,
+    onOpenProfiles: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Speaking Voice",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Text("✕", color = Color.White, fontSize = 14.sp)
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Switch which voice VOXYN uses to reply. Choose your cloned voice, a friend's voice, or a standard preset.",
+                    color = Color(0xFFB0BEC5),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+
+                val clonedVoices = options.filter { it.isCloned }
+                val presetVoices = options.filter { !it.isCloned }
+
+                Text(
+                    "CLONED VOICES (${clonedVoices.size})",
+                    color = VoxynCyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+
+                if (clonedVoices.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF131B24), RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0xFF263238), RoundedCornerShape(8.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            "No cloned voices yet. Enroll your voice or your friends' voices to have VOXYN speak as them!",
+                            color = DIM_COLOR,
+                            fontSize = 11.sp
+                        )
+                    }
+                } else {
+                    clonedVoices.forEach { opt ->
+                        val isSelected = activeOption?.id == opt.id
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected) Color(0xFF0F2A38) else Color(0xFF161F2B)
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) SUCCESS_COLOR else VoxynCyan.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(opt.displayName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Box(
+                                            modifier = Modifier
+                                                .background(VoxynCyan.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                                .border(0.5.dp, VoxynCyan, RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        ) {
+                                            Text("CLONED", color = VoxynCyan, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    Text(
+                                        "Pitch: ${String.format(Locale.US, "%.2f", opt.pitch)}x • Rate: ${String.format(Locale.US, "%.2f", opt.speechRate)}x",
+                                        color = DIM_COLOR,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    OutlinedButton(
+                                        onClick = { onPreview(opt) },
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("▶", color = VoxynCyan, fontSize = 11.sp)
+                                    }
+                                    Button(
+                                        onClick = { onSelect(opt) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isSelected) SUCCESS_COLOR else VoxynCyan
+                                        ),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (isSelected) "Active" else "Select",
+                                            color = VoxynBg,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "PRESET VOICES",
+                    color = Color(0xFF90A4AE),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+
+                presetVoices.forEach { opt ->
+                    val isSelected = activeOption?.id == opt.id
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFF0F2A38) else Color(0xFF161F2B)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) SUCCESS_COLOR else Color(0xFF263238)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(opt.displayName, color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { onPreview(opt) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text("▶", color = VoxynCyan, fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = { onSelect(opt) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isSelected) SUCCESS_COLOR else VoxynCyan
+                                    ),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        if (isSelected) "Active" else "Select",
+                                        color = VoxynBg,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(onClick = onOpenProfiles) {
+                    Text("🎙️ Clone Friend's Voice", color = VoxynCyan, fontSize = 11.sp)
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = Color.White, fontSize = 11.sp)
+                }
             }
         }
     )

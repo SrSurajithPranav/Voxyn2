@@ -68,6 +68,18 @@ class RequestRouterTest {
         assertEquals(RouteType.CURRENT_INFORMATION, r.type)
         assertEquals("tokyo", r.params["city"])
 
+        val rItaly = router.route("what's the time in Italy")
+        assertEquals(RouteType.CURRENT_INFORMATION, rItaly.type)
+        assertEquals("italy", rItaly.params["city"]?.lowercase())
+
+        val rTokyo = router.route("time in Tokyo")
+        assertEquals(RouteType.CURRENT_INFORMATION, rTokyo.type)
+        assertEquals("tokyo", rTokyo.params["city"]?.lowercase())
+
+        val rParis = router.route("what is the time in Paris")
+        assertEquals(RouteType.CURRENT_INFORMATION, rParis.type)
+        assertEquals("paris", rParis.params["city"]?.lowercase())
+
         val rUs = router.route("what time is it in the US")
         assertEquals(RouteType.CURRENT_INFORMATION, rUs.type)
         assertEquals("the us", rUs.params["city"]?.lowercase())

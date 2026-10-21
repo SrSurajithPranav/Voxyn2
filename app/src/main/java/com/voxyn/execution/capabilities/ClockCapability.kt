@@ -18,7 +18,12 @@ class ClockCapability(
 
     override val supportedActions: Set<String> = setOf(
         "SET_ALARM",
-        "SET_TIMER"
+        "DISMISS_ALARM",
+        "SNOOZE_ALARM",
+        "SHOW_ALARMS",
+        "SET_TIMER",
+        "DISMISS_TIMER",
+        "SHOW_TIMERS"
     )
 
     override val riskLevel: CapabilityRisk = CapabilityRisk.LOW
@@ -32,9 +37,14 @@ class ClockCapability(
 
         return try {
             when (step.actionType) {
-                "SET_ALARM" -> setAlarm(step.params)
-                "SET_TIMER" -> setTimer(step.params)
-                else -> PhaseResult.Failure("Unsupported clock action: ${step.actionType}", canFallback = false)
+                "SET_ALARM"     -> setAlarm(step.params)
+                "DISMISS_ALARM" -> dismissAlarm()
+                "SNOOZE_ALARM"  -> snoozeAlarm()
+                "SHOW_ALARMS"   -> showAlarms()
+                "SET_TIMER"     -> setTimer(step.params)
+                "DISMISS_TIMER" -> dismissTimer()
+                "SHOW_TIMERS"   -> showTimers()
+                else            -> PhaseResult.Failure("Unsupported clock action: ${step.actionType}", canFallback = false)
             }
         } catch (e: Exception) {
             VoxynLogger.e("Clock capability failed: ${e.message}", e, "CAPABILITY")
@@ -68,6 +78,45 @@ class ClockCapability(
         }
     }
 
+    private fun dismissAlarm(): PhaseResult<String> {
+        val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            PhaseResult.Success("Alarm dismissed")
+        } else {
+            // Fallback: open alarms screen so user or accessibility can dismiss
+            showAlarms()
+        }
+    }
+
+    private fun snoozeAlarm(): PhaseResult<String> {
+        val intent = Intent(AlarmClock.ACTION_SNOOZE_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            PhaseResult.Success("Alarm snoozed")
+        } else {
+            PhaseResult.Failure("Clock app does not support snooze intent")
+        }
+    }
+
+    private fun showAlarms(): PhaseResult<String> {
+        val intent = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            PhaseResult.Success("Opened alarms")
+        } else {
+            PhaseResult.Failure("No clock app available")
+        }
+    }
+
     private fun setTimer(params: Map<String, String>): PhaseResult<String> {
         val seconds = params["length_seconds"]?.toIntOrNull()
             ?: (params["minutes"]?.toIntOrNull()?.times(60))
@@ -89,6 +138,31 @@ class ClockCapability(
             PhaseResult.Success("Timer set for $durationStr")
         } else {
             PhaseResult.Failure("No clock app available to set timer")
+        }
+    }
+
+    private fun dismissTimer(): PhaseResult<String> {
+        val intent = Intent(AlarmClock.ACTION_DISMISS_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            PhaseResult.Success("Timer stopped")
+        } else {
+            showTimers()
+        }
+    }
+
+    private fun showTimers(): PhaseResult<String> {
+        val intent = Intent(AlarmClock.ACTION_SHOW_TIMERS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return if (intent.resolveActivity(context.packageManager) != null) {
+            context.startActivity(intent)
+            PhaseResult.Success("Opened timers")
+        } else {
+            PhaseResult.Failure("No clock app available")
         }
     }
 }

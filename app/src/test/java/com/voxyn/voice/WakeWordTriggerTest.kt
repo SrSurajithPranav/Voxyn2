@@ -17,6 +17,9 @@ class WakeWordTriggerTest {
         assertTrue(WakeWordService.isWakeTrigger("hey voxyn open youtube"))
         assertTrue(WakeWordService.isWakeTrigger("voxyn turn on bluetooth"))
         assertTrue(WakeWordService.isWakeTrigger("Okay Voxyn what is the weather"))
+        assertTrue(WakeWordService.isWakeTrigger("hey [unk]"))
+        assertTrue(WakeWordService.isWakeTrigger("hi [unk]"))
+        assertTrue(WakeWordService.isWakeTrigger("okay [unk]"))
     }
 
     @Test
@@ -25,6 +28,8 @@ class WakeWordTriggerTest {
         assertFalse(WakeWordService.isWakeTrigger("hi"))
         assertFalse(WakeWordService.isWakeTrigger("okay"))
         assertFalse(WakeWordService.isWakeTrigger("ok"))
+        assertFalse(WakeWordService.isWakeTrigger("[unk]"))
+        assertFalse(WakeWordService.isWakeTrigger("[unk] [unk]"))
         assertFalse(WakeWordService.isWakeTrigger("they"))
         assertFalse(WakeWordService.isWakeTrigger("today"))
         assertFalse(WakeWordService.isWakeTrigger("okay mom what is for dinner"))

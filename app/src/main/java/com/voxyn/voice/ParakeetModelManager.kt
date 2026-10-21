@@ -133,7 +133,7 @@ class ParakeetModelManager(private val context: Context) {
                 }
                 VoxynLogger.i("ASR: Parakeet model loading", "ASR")
                 val start = System.currentTimeMillis()
-                val r = OfflineRecognizer(context.assets, c)
+                val r = OfflineRecognizer(assetManager = null, config = c)
                 VoxynLogger.i("ASR: Parakeet model ready (load = ${System.currentTimeMillis() - start} ms)", "ASR")
                 r
             }.onFailure {

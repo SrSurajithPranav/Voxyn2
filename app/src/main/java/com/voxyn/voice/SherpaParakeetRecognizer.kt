@@ -140,26 +140,18 @@ class SherpaParakeetRecognizer(
                         (segSamples[it] * 32767.0f).toInt().coerceIn(-32768, 32767).toShort()
                     }
                     listener?.onResult(text, audioMs, inferenceMs, shortSamples)
+                    isRunning = false
+                    return
                 } else {
                     // Noise that VAD treated as speech but the model heard nothing.
-                    VoxynLogger.i("ASR: empty transcript — treated as no-speech", "ASR")
-                    listener?.onNoSpeech()
+                    VoxynLogger.i("ASR: empty transcript — continuing continuous listening", "ASR")
+                    speechNotified = false
                 }
-                isRunning = false
-                return
             }
 
-            if (!speechNotified && now - startTime >= SILENCE_TIMEOUT_MS) {
-                VoxynLogger.i("ASR: no speech within ${SILENCE_TIMEOUT_MS} ms — no-speech", "ASR")
-                listener?.onNoSpeech()
-                isRunning = false
-                return
-            }
-            if (now - startTime >= MAX_SESSION_MS) {
-                VoxynLogger.i("ASR: session cap reached — no-speech", "ASR")
-                listener?.onNoSpeech()
-                isRunning = false
-                return
+            if (speechNotified && now - startTime >= MAX_SESSION_MS) {
+                VoxynLogger.i("ASR: session cap reached — resetting segment", "ASR")
+                speechNotified = false
             }
                 delay(10L)
             }
@@ -203,7 +195,7 @@ class SherpaParakeetRecognizer(
                 windowSize = 512
             }
         }
-        Vad(context.assets, vadConfig)
+        Vad(assetManager = null, config = vadConfig)
     }.onFailure {
         VoxynLogger.e("ASR: VAD init failed: ${it.message}", tag = "ASR")
     }.getOrNull()
@@ -225,6 +217,20 @@ class SherpaParakeetRecognizer(
             try { record.release() } catch (_: Exception) {}
             null
         } else {
+            runCatching {
+                if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                    android.media.audiofx.AcousticEchoCanceler.create(record.audioSessionId)?.apply {
+                        enabled = true
+                        VoxynLogger.i("AcousticEchoCanceler enabled on mic session", "ASR")
+                    }
+                }
+                if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                    android.media.audiofx.NoiseSuppressor.create(record.audioSessionId)?.apply {
+                        enabled = true
+                        VoxynLogger.i("NoiseSuppressor enabled on mic session", "ASR")
+                    }
+                }
+            }
             record
         }
     }.onFailure {

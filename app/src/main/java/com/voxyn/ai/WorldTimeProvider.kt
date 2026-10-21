@@ -25,26 +25,45 @@ class WorldTimeProvider {
         "mexico city" to "America/Mexico_City",
         "sao paulo" to "America/Sao_Paulo", "rio de janeiro" to "America/Sao_Paulo",
         "buenos aires" to "America/Argentina/Buenos_Aires",
-        "london" to "Europe/London",
-        "paris" to "Europe/Paris", "berlin" to "Europe/Berlin", "rome" to "Europe/Rome",
-        "madrid" to "Europe/Madrid", "barcelona" to "Europe/Madrid", "amsterdam" to "Europe/Amsterdam",
-        "zurich" to "Europe/Zurich", "vienna" to "Europe/Vienna", "brussels" to "Europe/Brussels",
-        "stockholm" to "Europe/Stockholm", "oslo" to "Europe/Oslo", "copenhagen" to "Europe/Copenhagen",
-        "warsaw" to "Europe/Warsaw", "athens" to "Europe/Athens", "lisbon" to "Europe/Lisbon",
-        "moscow" to "Europe/Moscow", "vladivostok" to "Asia/Vladivostok", "istanbul" to "Europe/Istanbul",
-        "dubai" to "Asia/Dubai", "doha" to "Asia/Qatar", "riyadh" to "Asia/Riyadh",
-        "cairo" to "Africa/Cairo", "lagos" to "Africa/Lagos", "nairobi" to "Africa/Nairobi",
-        "johannesburg" to "Africa/Johannesburg", "casablanca" to "Africa/Casablanca",
+        "london" to "Europe/London", "uk" to "Europe/London", "united kingdom" to "Europe/London", "england" to "Europe/London",
+        "paris" to "Europe/Paris", "france" to "Europe/Paris",
+        "berlin" to "Europe/Berlin", "germany" to "Europe/Berlin",
+        "rome" to "Europe/Rome", "italy" to "Europe/Rome",
+        "madrid" to "Europe/Madrid", "barcelona" to "Europe/Madrid", "spain" to "Europe/Madrid",
+        "amsterdam" to "Europe/Amsterdam", "netherlands" to "Europe/Amsterdam",
+        "zurich" to "Europe/Zurich", "switzerland" to "Europe/Zurich",
+        "vienna" to "Europe/Vienna", "austria" to "Europe/Vienna",
+        "brussels" to "Europe/Brussels", "belgium" to "Europe/Brussels",
+        "stockholm" to "Europe/Stockholm", "sweden" to "Europe/Stockholm",
+        "oslo" to "Europe/Oslo", "norway" to "Europe/Oslo",
+        "copenhagen" to "Europe/Copenhagen", "denmark" to "Europe/Copenhagen",
+        "warsaw" to "Europe/Warsaw", "poland" to "Europe/Warsaw",
+        "athens" to "Europe/Athens", "greece" to "Europe/Athens",
+        "lisbon" to "Europe/Lisbon", "portugal" to "Europe/Lisbon",
+        "moscow" to "Europe/Moscow", "vladivostok" to "Asia/Vladivostok",
+        "istanbul" to "Europe/Istanbul", "turkey" to "Europe/Istanbul",
+        "dubai" to "Asia/Dubai", "uae" to "Asia/Dubai", "united arab emirates" to "Asia/Dubai",
+        "doha" to "Asia/Qatar", "qatar" to "Asia/Qatar",
+        "riyadh" to "Asia/Riyadh", "saudi arabia" to "Asia/Riyadh",
+        "cairo" to "Africa/Cairo", "egypt" to "Africa/Cairo",
+        "lagos" to "Africa/Lagos", "nigeria" to "Africa/Lagos",
+        "nairobi" to "Africa/Nairobi", "kenya" to "Africa/Nairobi",
+        "johannesburg" to "Africa/Johannesburg", "south africa" to "Africa/Johannesburg",
+        "casablanca" to "Africa/Casablanca", "morocco" to "Africa/Casablanca",
         "delhi" to "Asia/Kolkata", "new delhi" to "Asia/Kolkata", "mumbai" to "Asia/Kolkata",
         "kolkata" to "Asia/Kolkata", "bengaluru" to "Asia/Kolkata", "chennai" to "Asia/Kolkata",
         "hyderabad" to "Asia/Kolkata", "india" to "Asia/Kolkata",
-        "tokyo" to "Asia/Tokyo", "osaka" to "Asia/Tokyo",
-        "beijing" to "Asia/Shanghai", "shanghai" to "Asia/Shanghai", "hong kong" to "Asia/Hong_Kong",
-        "seoul" to "Asia/Seoul", "singapore" to "Asia/Singapore", "kuala lumpur" to "Asia/Kuala_Lumpur",
-        "bangkok" to "Asia/Bangkok", "jakarta" to "Asia/Jakarta", "manila" to "Asia/Manila",
+        "tokyo" to "Asia/Tokyo", "osaka" to "Asia/Tokyo", "japan" to "Asia/Tokyo",
+        "beijing" to "Asia/Shanghai", "shanghai" to "Asia/Shanghai", "hong kong" to "Asia/Hong_Kong", "china" to "Asia/Shanghai",
+        "seoul" to "Asia/Seoul", "south korea" to "Asia/Seoul", "korea" to "Asia/Seoul",
+        "singapore" to "Asia/Singapore",
+        "kuala lumpur" to "Asia/Kuala_Lumpur", "malaysia" to "Asia/Kuala_Lumpur",
+        "bangkok" to "Asia/Bangkok", "thailand" to "Asia/Bangkok",
+        "jakarta" to "Asia/Jakarta", "indonesia" to "Asia/Jakarta",
+        "manila" to "Asia/Manila", "philippines" to "Asia/Manila",
         "sydney" to "Australia/Sydney", "melbourne" to "Australia/Melbourne",
         "brisbane" to "Australia/Brisbane", "perth" to "Australia/Perth", "adelaide" to "Australia/Adelaide",
-        "auckland" to "Pacific/Auckland", "wellington" to "Pacific/Auckland"
+        "auckland" to "Pacific/Auckland", "wellington" to "Pacific/Auckland", "new zealand" to "Pacific/Auckland"
     )
 
     /** Countries with multiple time zones — returned as explicit zone lists. */
@@ -82,8 +101,13 @@ class WorldTimeProvider {
         return runCatching {
             val now = ZonedDateTime.now(ZoneId.of(zoneId))
             val time = now.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
-            val pretty = city.split(" ").joinToString(" ") { w ->
-                w.replaceFirstChar { it.uppercase(Locale.US) }
+            val pretty = when (city.lowercase()) {
+                "uk" -> "the UK"
+                "uae" -> "the UAE"
+                "the us", "us", "usa", "the usa" -> "the US"
+                else -> city.split(" ").joinToString(" ") { w ->
+                    w.replaceFirstChar { it.uppercase(Locale.US) }
+                }
             }
             "In $pretty it's $time"
         }.getOrNull() ?: return ""

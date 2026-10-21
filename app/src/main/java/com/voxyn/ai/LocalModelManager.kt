@@ -265,15 +265,8 @@ class LocalModelManager(private val context: Context) {
                     if (n < 0) break
                     h += n
                 }
-                ins.channel.position(length - 22)
-                val tail = ByteArray(22)
-                var t = 0
-                while (t < 22) {
-                    val n = ins.read(tail, t, 22 - t)
-                    if (n < 0) break
-                    t += n
-                }
-                isZipTask(head, tail)
+                (head[0] == 0x50.toByte() && head[1] == 0x4B.toByte()) ||
+                    (head.size >= 6 && head[4] == 0x50.toByte() && head[5] == 0x4B.toByte())
             }
         }
     }.getOrDefault(false)
@@ -291,27 +284,12 @@ class LocalModelManager(private val context: Context) {
             } else null
         }
 
-    /**
-     * MediaPipe LLM .task files are zip archives: a local-file-header ("PK\u0003\u0004",
-     * usually preceded by a 4-byte flatbuffer header) plus an end-of-central-directory
-     * ("PK\u0005\u0006") at the very end. Requiring both rejects raw TFLite flatbuffers
-     * and truncated downloads, which MediaPipe cannot open.
-     */
-    private fun isZipTask(head: ByteArray, tail: ByteArray): Boolean =
-        head.size >= 6 && tail.size == 22 &&
-            (String(head, 0, 2, Charsets.US_ASCII) == "PK" ||
-                String(head, 4, 2, Charsets.US_ASCII) == "PK") &&
-            String(tail, 0, 4, Charsets.US_ASCII) == "PK\u0005\u0006"
-
     private fun isValidModel(file: File): Boolean {
         if (!file.exists() || file.length() < MIN_VALID_SIZE) return false
         return runCatching {
-            val head = file.inputStream().use { it.readNBytes(8) }
-            val tail = file.inputStream().use { ins ->
-                ins.skip(file.length() - 22)
-                ins.readNBytes(22)
+            java.util.zip.ZipFile(file).use { zip ->
+                zip.entries().hasMoreElements()
             }
-            isZipTask(head, tail)
         }.getOrDefault(false)
     }
 }

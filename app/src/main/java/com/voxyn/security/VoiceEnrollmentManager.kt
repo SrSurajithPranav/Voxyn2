@@ -102,12 +102,18 @@ class VoiceEnrollmentManager(
                 if (isOwner || allProfiles.isEmpty()) "Owner" else "User ${allProfiles.size + 1}"
             }
 
+            // Analyze acoustic features for voice cloning
+            val acoustic = com.voxyn.voice.AcousticVoiceAnalyzer.analyze(samples)
+
             val profile = SpeakerProfile(
                 id = profileId,
                 name = finalName,
                 isOwner = isOwner || allProfiles.isEmpty(),
                 voiceprint = voiceprint,
-                enrolledAtMs = System.currentTimeMillis()
+                enrolledAtMs = System.currentTimeMillis(),
+                pitch = acoustic.pitch,
+                speechRate = acoustic.speechRate,
+                timbre = acoustic.timbre
             )
 
             val enrolled = repository.enrollProfile(profile)
@@ -120,6 +126,124 @@ class VoiceEnrollmentManager(
         } finally {
             resumeWakeWordService()
         }
+    }
+
+    /**
+     * Enrolls voice from an audio file (.wav, .mp3, .m4a, .aac, .flac).
+     */
+    suspend fun enrollVoiceFromFile(
+        name: String,
+        isOwner: Boolean,
+        uri: android.net.Uri
+    ): Result<SpeakerProfile> = withContext(Dispatchers.IO) {
+        val allProfiles = repository.getAllProfiles()
+        if (allProfiles.size >= SpeakerProfileRepository.MAX_PROFILES) {
+            return@withContext Result.failure(
+                IllegalStateException("Maximum of ${SpeakerProfileRepository.MAX_PROFILES} profiles reached")
+            )
+        }
+
+        val samples = AudioFileDecoder.decodeToPcm16(context, uri)
+            ?: return@withContext Result.failure(IllegalArgumentException("Could not decode audio from file"))
+
+        val qualityIssue = verifier.validateAudioQuality(samples)
+        if (qualityIssue != null) {
+            return@withContext Result.failure(IllegalArgumentException("Audio quality issue: ${qualityIssue.reason}"))
+        }
+
+        val voiceprint = verifier.extractVoiceprint(samples)
+        val profileId = if (isOwner || allProfiles.isEmpty()) {
+            SpeakerProfileRepository.OWNER_ID
+        } else {
+            UUID.randomUUID().toString()
+        }
+
+        val finalName = name.trim().ifBlank {
+            if (isOwner || allProfiles.isEmpty()) "Owner" else "User ${allProfiles.size + 1}"
+        }
+
+        val acoustic = com.voxyn.voice.AcousticVoiceAnalyzer.analyze(samples)
+
+        val profile = SpeakerProfile(
+            id = profileId,
+            name = finalName,
+            isOwner = isOwner || allProfiles.isEmpty(),
+            voiceprint = voiceprint,
+            enrolledAtMs = System.currentTimeMillis(),
+            pitch = acoustic.pitch,
+            speechRate = acoustic.speechRate,
+            timbre = acoustic.timbre
+        )
+
+        val enrolled = repository.enrollProfile(profile)
+        if (!enrolled) {
+            return@withContext Result.failure(IllegalStateException("Could not save profile to repository"))
+        }
+
+        VoxynLogger.i("Successfully enrolled voice from file: \"${profile.name}\" (owner=${profile.isOwner})", "SPEAKER")
+        Result.success(profile)
+    }
+
+    /**
+     * Adds an additional live audio sample to an existing profile (up to 25 samples).
+     */
+    suspend fun addSample(
+        profileId: String,
+        onProgress: (secondsRemaining: Int, progress: Float) -> Unit
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        isCancelled = false
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return@withContext Result.failure(SecurityException("Microphone permission not granted"))
+        }
+        if (repository.getProfile(profileId) == null) {
+            return@withContext Result.failure(IllegalArgumentException("Profile not found: $profileId"))
+        }
+
+        pauseWakeWordService()
+        try {
+            val totalSamples = SAMPLE_RATE * ENROLLMENT_DURATION_SEC
+            val samples = recordPcmAudio(totalSamples, onProgress)
+            if (isCancelled) return@withContext Result.failure(CancellationException("Enrollment cancelled"))
+
+            val qualityIssue = verifier.validateAudioQuality(samples)
+            if (qualityIssue != null) return@withContext Result.failure(IllegalArgumentException("Audio quality issue: ${qualityIssue.reason}"))
+
+            val voiceprint = verifier.extractVoiceprint(samples)
+            val added = repository.addSampleToProfile(profileId, voiceprint)
+            if (!added) return@withContext Result.failure(IllegalStateException("Failed to add sample to profile"))
+
+            val updated = repository.getProfile(profileId)
+            Result.success(updated?.sampleVoiceprints?.size ?: 1)
+        } finally {
+            resumeWakeWordService()
+        }
+    }
+
+    /**
+     * Adds an additional sample from an audio file to an existing profile.
+     */
+    suspend fun addSampleFromFile(
+        profileId: String,
+        uri: android.net.Uri
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        if (repository.getProfile(profileId) == null) {
+            return@withContext Result.failure(IllegalArgumentException("Profile not found: $profileId"))
+        }
+
+        val samples = AudioFileDecoder.decodeToPcm16(context, uri)
+            ?: return@withContext Result.failure(IllegalArgumentException("Could not decode audio from file"))
+
+        val qualityIssue = verifier.validateAudioQuality(samples)
+        if (qualityIssue != null) {
+            return@withContext Result.failure(IllegalArgumentException("Audio quality issue: ${qualityIssue.reason}"))
+        }
+
+        val voiceprint = verifier.extractVoiceprint(samples)
+        val added = repository.addSampleToProfile(profileId, voiceprint)
+        if (!added) return@withContext Result.failure(IllegalStateException("Failed to add sample to profile"))
+
+        val updated = repository.getProfile(profileId)
+        Result.success(updated?.sampleVoiceprints?.size ?: 1)
     }
 
     /**

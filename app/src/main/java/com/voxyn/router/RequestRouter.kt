@@ -47,8 +47,8 @@ class RequestRouter {
             return RouteDecision(RouteType.MEMORY_FORGET, mapOf("topic" to topic), 0.9f)
         }
 
-        // ── Current information: "what time is it in New York?" ───────────
-        val worldTime = Regex("^what\\s+time\\s+is\\s+it\\s+in\\s+(.+)$").find(t)
+        // ── Current information: "what time is it in New York?", "what's the time in Italy", "time in Tokyo" ───────────
+        val worldTime = Regex("^(?:what(?:'s| is)? (?:the )?time (?:is it )?in|what\\s+time\\s+is\\s+it\\s+in|time in)\\s+(.+)$").find(t)
         if (worldTime != null) {
             val city = worldTime.groupValues[1].trim().trimEnd('?', '.', '!')
             return RouteDecision(RouteType.CURRENT_INFORMATION, mapOf("city" to city), 0.92f)
@@ -119,9 +119,10 @@ class RequestRouter {
         }
 
         // ── Knowledge / conversation: "what is quantum computing?" ────────
-        if (Regex("^(?:what is|what are|what was|what does|what do|who is|who was|explain|define|tell me about|tell me what|how does|how do|why is|why do|how many|how much|what's the meaning|what is the meaning|meaning of|capital of|population of|what is the population)").containsMatchIn(t) ||
+        if (Regex("^(?:what(?:'s| is| are| was| does| do)|who(?:'s| is| was| are)|how(?:'s| is| are| does| do| many| much)|why(?:'s| is| are| does| do)|where(?:'s| is| was| are)|when(?:'s| is| was| are)|can you tell me|tell me|explain|define|meaning of|capital of|population of|president of|prime minister of)").containsMatchIn(t) ||
             t.contains("joke") ||
-            Regex("\\b(capital|population|largest|tallest|biggest|distance between|difference between)\\b").containsMatchIn(t)
+            t.startsWith("search ") ||
+            Regex("\\b(capital|population|largest|tallest|biggest|founder|ceo|author|president|prime minister)\\b").containsMatchIn(t)
         ) {
             return RouteDecision(RouteType.CONVERSATIONAL, mapOf("query" to perceived.trim()), 0.85f)
         }

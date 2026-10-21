@@ -243,6 +243,20 @@ class VoskCommandRecognizer(
             try { record.release() } catch (_: Exception) {}
             null
         } else {
+            runCatching {
+                if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                    android.media.audiofx.AcousticEchoCanceler.create(record.audioSessionId)?.apply {
+                        enabled = true
+                        VoxynLogger.i("AcousticEchoCanceler enabled on mic session", "ASR")
+                    }
+                }
+                if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                    android.media.audiofx.NoiseSuppressor.create(record.audioSessionId)?.apply {
+                        enabled = true
+                        VoxynLogger.i("NoiseSuppressor enabled on mic session", "ASR")
+                    }
+                }
+            }
             record
         }
     }.onFailure {

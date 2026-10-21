@@ -138,6 +138,54 @@ class VoxynAccessibilityService : AccessibilityService() {
         return textContent.take(200)
     }
 
+    fun performOpenRecents(): Boolean {
+        VoxynLogger.i("A11Y: Performing RECENTS", "A11Y")
+        return performGlobalAction(GLOBAL_ACTION_RECENTS)
+    }
+
+    fun performQuickSettings(): Boolean {
+        VoxynLogger.i("A11Y: Performing QUICK_SETTINGS", "A11Y")
+        return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+    }
+
+    fun performLockScreen(): Boolean {
+        VoxynLogger.i("A11Y: Performing LOCK_SCREEN", "A11Y")
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    fun performTakeScreenshot(): Boolean {
+        VoxynLogger.i("A11Y: Performing TAKE_SCREENSHOT", "A11Y")
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
+        } else {
+            false
+        }
+    }
+
+    fun performSplitScreen(): Boolean {
+        VoxynLogger.i("A11Y: Performing SPLIT_SCREEN", "A11Y")
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    fun performClickByText(query: String): Boolean {
+        VoxynLogger.i("A11Y: Performing CLICK_BY_TEXT '$query'", "A11Y")
+        val root = rootInActiveWindow ?: return false
+        val node = findNodeByTextOrId(root, listOf(query.lowercase())) ?: return false
+        var target: AccessibilityNodeInfo? = node
+        while (target != null && !target.isClickable) {
+            target = target.parent
+        }
+        return target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────
 
     private fun findScrollableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -181,5 +229,29 @@ class VoxynAccessibilityService : AccessibilityService() {
             list.addAll(extractAllText(child))
         }
         return list
+    }
+
+    fun performInputText(text: String): Boolean {
+        VoxynLogger.i("A11Y: Performing INPUT_TEXT '$text'", "A11Y")
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: findFirstEditText(root)
+            ?: return false
+        val args = android.os.Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    private fun findFirstEditText(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFirstEditText(child)
+            if (found != null) return found
+        }
+        return null
     }
 }

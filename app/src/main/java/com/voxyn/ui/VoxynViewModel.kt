@@ -16,6 +16,7 @@ import com.voxyn.voice.AsrDownloadState
 import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.TextToSpeechManager
 import com.voxyn.voice.VoiceChoice
+import com.voxyn.voice.VoiceOption
 import com.voxyn.voice.VoiceDiagnosticsManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -66,12 +67,72 @@ class VoxynViewModel(
 
     val currentVoice: VoiceChoice get() = tts?.getVoiceChoice() ?: VoiceChoice.SYSTEM_DEFAULT
 
+    private val _activeVoiceOption = MutableStateFlow<VoiceOption?>(tts?.getActiveVoiceOption())
+    val activeVoiceOption: StateFlow<VoiceOption?> = _activeVoiceOption.asStateFlow()
+
+    fun getAllVoiceOptions(): List<VoiceOption> {
+        val presets = VoiceChoice.values().map { choice ->
+            VoiceOption(
+                id = choice.name,
+                displayName = choice.displayName,
+                pitch = choice.pitch,
+                speechRate = choice.speechRate,
+                timbre = choice.voiceFilter,
+                isCloned = false
+            )
+        }
+        val cloned = (speakerRepo?.getAllProfiles() ?: emptyList()).map { profile ->
+            VoiceOption(
+                id = "cloned_${profile.id}",
+                displayName = if (profile.isOwner) "My Voice (${profile.name})" else "${profile.name}'s Voice",
+                pitch = profile.pitch,
+                speechRate = profile.speechRate,
+                timbre = profile.timbre,
+                isCloned = true,
+                profileId = profile.id
+            )
+        }
+        return presets + cloned
+    }
+
+    fun selectVoiceOption(option: VoiceOption) {
+        tts?.setVoiceOption(option)
+        _activeVoiceOption.value = option
+    }
+
+    fun selectClonedVoice(profile: SpeakerProfile) {
+        tts?.setClonedVoice(profile)
+        _activeVoiceOption.value = tts?.getActiveVoiceOption()
+    }
+
+    fun previewVoiceOption(option: VoiceOption) {
+        tts?.setVoiceOption(option)
+        _activeVoiceOption.value = option
+        val text = if (option.isCloned) {
+            "Hello Sir. I am speaking in ${option.displayName}."
+        } else {
+            "Hello Sir. This is the ${option.displayName} preset voice."
+        }
+        tts?.speak(text)
+    }
+
+    fun previewProfileVoice(profile: SpeakerProfile) {
+        selectClonedVoice(profile)
+        val text = if (profile.isOwner) {
+            "Hello Sir. This is your cloned voice speaking."
+        } else {
+            "Hello Sir. This is ${profile.name}'s voice speaking."
+        }
+        tts?.speak(text)
+    }
+
     fun cycleVoice(): VoiceChoice {
         val manager = tts ?: return VoiceChoice.SYSTEM_DEFAULT
         val voices = manager.getAvailableVoices()
         val nextIdx = (voices.indexOf(manager.getVoiceChoice()) + 1) % voices.size
         val nextVoice = voices[nextIdx]
         manager.setVoiceChoice(nextVoice)
+        _activeVoiceOption.value = manager.getActiveVoiceOption()
         return nextVoice
     }
 
@@ -104,6 +165,73 @@ class VoxynViewModel(
                     _enrollmentState.value = VoiceEnrollmentState.Error(
                         error.message ?: "Voice enrollment failed"
                     )
+                }
+            )
+        }
+    }
+
+    fun startEnrollmentFromFile(name: String, isOwner: Boolean, uri: android.net.Uri) {
+        val manager = enrollmentManager ?: run {
+            _enrollmentState.value = VoiceEnrollmentState.Error("Voice enrollment service unavailable")
+            return
+        }
+        viewModelScope.launch {
+            _enrollmentState.value = VoiceEnrollmentState.Processing
+            val result = manager.enrollVoiceFromFile(name, isOwner, uri)
+            result.fold(
+                onSuccess = { profile ->
+                    refreshProfiles()
+                    _enrollmentState.value = VoiceEnrollmentState.Success(
+                        profile.name,
+                        "Voice ID enrolled from audio file for \"${profile.name}\"!"
+                    )
+                },
+                onFailure = { error ->
+                    _enrollmentState.value = VoiceEnrollmentState.Error(
+                        error.message ?: "Voice file enrollment failed"
+                    )
+                }
+            )
+        }
+    }
+
+    fun addSample(profileId: String) {
+        val manager = enrollmentManager ?: return
+        viewModelScope.launch {
+            _enrollmentState.value = VoiceEnrollmentState.Recording(VoiceEnrollmentManager.ENROLLMENT_DURATION_SEC, 0f)
+            val result = manager.addSample(profileId) { secondsRemaining, progress ->
+                _enrollmentState.value = VoiceEnrollmentState.Recording(secondsRemaining, progress)
+            }
+            result.fold(
+                onSuccess = { count ->
+                    refreshProfiles()
+                    _enrollmentState.value = VoiceEnrollmentState.Success(
+                        "",
+                        "Added sample! Profile now has $count voice samples."
+                    )
+                },
+                onFailure = { error ->
+                    _enrollmentState.value = VoiceEnrollmentState.Error(error.message ?: "Failed to add sample")
+                }
+            )
+        }
+    }
+
+    fun addSampleFromFile(profileId: String, uri: android.net.Uri) {
+        val manager = enrollmentManager ?: return
+        viewModelScope.launch {
+            _enrollmentState.value = VoiceEnrollmentState.Processing
+            val result = manager.addSampleFromFile(profileId, uri)
+            result.fold(
+                onSuccess = { count ->
+                    refreshProfiles()
+                    _enrollmentState.value = VoiceEnrollmentState.Success(
+                        "",
+                        "Added file sample! Profile now has $count voice samples."
+                    )
+                },
+                onFailure = { error ->
+                    _enrollmentState.value = VoiceEnrollmentState.Error(error.message ?: "Failed to add file sample")
                 }
             )
         }

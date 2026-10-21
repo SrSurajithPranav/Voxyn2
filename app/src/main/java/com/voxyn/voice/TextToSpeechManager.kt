@@ -30,12 +30,20 @@ enum class VoiceChoice(val displayName: String, val pitch: Float, val speechRate
     }
 }
 
+data class VoiceOption(
+    val id: String,
+    val displayName: String,
+    val pitch: Float,
+    val speechRate: Float,
+    val timbre: String?,
+    val isCloned: Boolean = false,
+    val profileId: String? = null
+)
+
 /**
  * TextToSpeechManager — robust TTS playback with reliable completion callbacks,
- * single-speaker enforcement, and selection among 5 distinct voice choices.
- *
- * Prevents TTS from talking over itself, queueing duplicate stale speech,
- * or interfering with microphone listening.
+ * single-speaker enforcement, voice cloning parameter replication, and selection
+ * among built-in presets and custom enrolled friend/owner voices.
  */
 class TextToSpeechManager(context: Context) {
 
@@ -50,15 +58,22 @@ class TextToSpeechManager(context: Context) {
     private val utteranceSequence = AtomicLong()
     private val activeUtteranceId = AtomicReference<String?>(null)
     @Volatile private var currentVoiceChoice: VoiceChoice = VoiceChoice.SYSTEM_DEFAULT
+    @Volatile private var activeVoiceOption: VoiceOption = VoiceOption(
+        id = VoiceChoice.SYSTEM_DEFAULT.name,
+        displayName = VoiceChoice.SYSTEM_DEFAULT.displayName,
+        pitch = VoiceChoice.SYSTEM_DEFAULT.pitch,
+        speechRate = VoiceChoice.SYSTEM_DEFAULT.speechRate,
+        timbre = VoiceChoice.SYSTEM_DEFAULT.voiceFilter
+    )
 
     init {
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
-                applyVoiceSettings(currentVoiceChoice)
+                applyVoiceSettings(activeVoiceOption.pitch, activeVoiceOption.speechRate, activeVoiceOption.timbre)
                 setupProgressListener()
                 isReady = true
-                VoxynLogger.i("TTS ready (voice: ${currentVoiceChoice.displayName})", "TTS")
+                VoxynLogger.i("TTS ready (voice: ${activeVoiceOption.displayName})", "TTS")
                 pendingSpeech?.let { text ->
                     val cb = pendingCallback
                     pendingSpeech = null
@@ -76,25 +91,55 @@ class TextToSpeechManager(context: Context) {
 
     fun getVoiceChoice(): VoiceChoice = currentVoiceChoice
 
+    fun getActiveVoiceOption(): VoiceOption = activeVoiceOption
+
     fun setVoiceChoice(choice: VoiceChoice) {
         currentVoiceChoice = choice
-        applyVoiceSettings(choice)
-        VoxynLogger.i("TTS voice switched to: ${choice.displayName}", "TTS")
+        activeVoiceOption = VoiceOption(
+            id = choice.name,
+            displayName = choice.displayName,
+            pitch = choice.pitch,
+            speechRate = choice.speechRate,
+            timbre = choice.voiceFilter
+        )
+        applyVoiceSettings(choice.pitch, choice.speechRate, choice.voiceFilter)
+        VoxynLogger.i("TTS voice switched to preset: ${choice.displayName}", "TTS")
     }
 
-    private fun applyVoiceSettings(choice: VoiceChoice) {
+    fun setVoiceOption(option: VoiceOption) {
+        activeVoiceOption = option
+        currentVoiceChoice = VoiceChoice.fromName(option.id)
+        applyVoiceSettings(option.pitch, option.speechRate, option.timbre)
+        VoxynLogger.i("TTS voice switched to: ${option.displayName} (pitch=${option.pitch}, rate=${option.speechRate}, timbre=${option.timbre})", "TTS")
+    }
+
+    fun setClonedVoice(profile: com.voxyn.security.SpeakerProfile) {
+        val label = if (profile.isOwner) "My Voice (${profile.name})" else "${profile.name}'s Voice"
+        val option = VoiceOption(
+            id = "cloned_${profile.id}",
+            displayName = label,
+            pitch = profile.pitch,
+            speechRate = profile.speechRate,
+            timbre = profile.timbre,
+            isCloned = true,
+            profileId = profile.id
+        )
+        setVoiceOption(option)
+    }
+
+    private fun applyVoiceSettings(pitch: Float, rate: Float, filter: String?) {
         val engine = tts ?: return
-        engine.setPitch(choice.pitch)
-        engine.setSpeechRate(choice.speechRate)
+        engine.setPitch(pitch)
+        engine.setSpeechRate(rate)
         try {
             val available = engine.voices ?: emptySet()
-            if (choice.voiceFilter != null) {
+            if (filter != null) {
                 val match = available.firstOrNull { v ->
                     v.locale.language == Locale.US.language &&
-                    v.name.contains(choice.voiceFilter, ignoreCase = true) &&
+                    v.name.contains(filter, ignoreCase = true) &&
                     !v.isNetworkConnectionRequired
                 } ?: available.firstOrNull { v ->
-                    v.name.contains(choice.voiceFilter, ignoreCase = true)
+                    v.name.contains(filter, ignoreCase = true)
                 }
                 if (match != null) {
                     engine.voice = match
@@ -182,8 +227,30 @@ class TextToSpeechManager(context: Context) {
         if (onComplete != null) {
             callbacks[utteranceId] = onComplete
         }
-        VoxynLogger.i("TTS: \"$text\"", "TTS")
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        val cleanText = sanitizeForSpeech(text)
+        if (cleanText.isBlank()) {
+            onComplete?.invoke()
+            return
+        }
+        VoxynLogger.i("TTS: \"$cleanText\"", "TTS")
+        tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+    }
+
+    private fun sanitizeForSpeech(raw: String): String {
+        return raw
+            // Strip any leading AI persona prefix like "VOXYN:", "VOXYN -", "Assistant:", etc.
+            .replaceFirst(Regex("^(?:VOXYN|VOXIN|Assistant|AI|Bot)\\s*[:\\-–—]?\\s*", RegexOption.IGNORE_CASE), "")
+            // Replace all-caps VOXYN so TTS doesn't spell it out as V-O-X-Y-N
+            .replace(Regex("\\bVOXYN\\b", RegexOption.IGNORE_CASE), "Voxyn")
+            .replace(Regex("\\bV-O-X-Y-N\\b", RegexOption.IGNORE_CASE), "Voxyn")
+            .replace(Regex("\\bV O X Y N\\b", RegexOption.IGNORE_CASE), "Voxyn")
+            // Clean up Markdown formatting
+            .replace(Regex("\\*\\*(.*?)\\*\\*"), "$1")
+            .replace(Regex("\\*(.*?)\\*"), "$1")
+            .replace(Regex("`([^`]+)`"), "$1")
+            .replace(Regex("https?://\\S+"), "link")
+            .replace(Regex("[#_~]"), " ")
+            .trim()
     }
 
     fun isSpeaking(): Boolean = isCurrentlySpeaking.get() || (tts?.isSpeaking == true)

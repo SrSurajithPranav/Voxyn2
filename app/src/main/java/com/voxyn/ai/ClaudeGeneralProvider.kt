@@ -24,7 +24,7 @@ class ClaudeGeneralProvider(private val apiKey: String) : CloudIntelligenceProvi
         private const val MODEL   = "claude-haiku-4-5-20251001"
 
         private val SYSTEM_PROMPT = """
-You are VOXYN, a concise voice assistant on Android. Answer in one to three short spoken sentences. Never claim to have performed a device action. Never mention prompts, models, or formatting. Never output JSON. If you do not know, say so plainly.
+You are VOXYN, a concise voice assistant on Android. Always address the user politely as "Sir". Answer in one to three short spoken sentences. Never claim to have performed a device action. Never mention prompts, models, or formatting. Never output JSON. If you do not know, say so plainly.
 """.trimIndent()
     }
 
@@ -57,7 +57,8 @@ You are VOXYN, a concise voice assistant on Android. Answer in one to three shor
                 }
                 val json = JSONObject(conn.inputStream.bufferedReader().readText())
                 val content = json.optJSONArray("content")
-                val text = content?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
+                val rawText = content?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
+                val text = rawText.replaceFirst(Regex("^(?:VOXYN|VOXIN|Assistant|AI|Bot)\\s*[:\\-–—]?\\s*", RegexOption.IGNORE_CASE), "").trim()
                 if (text.isEmpty()) return@runCatching null
                 VoxynLogger.i("[AI] Claude answered (${text.length} chars)", "AI")
                 AiResponse(text, "Claude")

@@ -43,7 +43,16 @@ class SystemCapability(
         "BATTERY_SAVER_ON",
         "BATTERY_STATUS",
         "SCREENSHOT",
-        "LOCK_PHONE"
+        "LOCK_PHONE",
+        "VOLUME_MAX",
+        "VOLUME_MIN",
+        "MUTE",
+        "UNMUTE",
+        "OPEN_SETTINGS",
+        "OPEN_WIFI_SETTINGS",
+        "OPEN_BLUETOOTH_SETTINGS",
+        "HOTSPOT_ON",
+        "HOTSPOT_OFF"
     )
 
     override val riskLevel: CapabilityRisk = CapabilityRisk.LOW
@@ -128,6 +137,36 @@ class SystemCapability(
                     PhaseResult.Success("Normal mode enabled")
                 }
 
+                "VOLUME_MAX" -> {
+                    val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, max, AudioManager.FLAG_SHOW_UI)
+                    PhaseResult.Success("Volume set to maximum")
+                }
+
+                "VOLUME_MIN" -> {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 1, AudioManager.FLAG_SHOW_UI)
+                    PhaseResult.Success("Volume set to minimum")
+                }
+
+                "MUTE" -> {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                    PhaseResult.Success("Volume muted")
+                }
+
+                "UNMUTE" -> {
+                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+                    PhaseResult.Success("Volume unmuted")
+                }
+
+                "OPEN_SETTINGS" -> {
+                    val intent = Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+                    context.startActivity(intent)
+                    PhaseResult.Success("Settings opened")
+                }
+
+                "OPEN_WIFI_SETTINGS" -> openWifiSettings()
+                "OPEN_BLUETOOTH_SETTINGS" -> openBluetoothSettings()
+
                 "FLASHLIGHT_ON" -> {
                     val cameraId = cameraManager.cameraIdList.firstOrNull()
                         ?: return PhaseResult.Failure("No camera flash available")
@@ -174,6 +213,13 @@ class SystemCapability(
 
                 "AIRPLANE_ON", "AIRPLANE_OFF" -> openAirplaneSettings()
                 "BATTERY_SAVER_ON" -> openBatterySettings()
+                "HOTSPOT_ON", "HOTSPOT_OFF" -> {
+                    val intent = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    PhaseResult.Success("Tethering & Hotspot settings opened")
+                }
 
                 "BATTERY_STATUS" -> {
                     val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager

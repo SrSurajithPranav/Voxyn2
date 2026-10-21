@@ -37,7 +37,8 @@ class CommandVerificationGate(
     fun verifyAndAuthorize(
         source: InputSource,
         audioSamples: ShortArray?,
-        rawTranscript: String
+        rawTranscript: String,
+        isMediaActive: Boolean = false
     ): GateResult {
         if (rawTranscript.isBlank()) {
             return GateResult.Denied(
@@ -57,7 +58,7 @@ class CommandVerificationGate(
         }
 
         // Voice commands require speaker verification
-        when (val outcome = speakerVerifier.verify(audioSamples)) {
+        when (val outcome = speakerVerifier.verify(audioSamples, isMediaActive)) {
             is VerificationResult.Verified -> {
                 VoxynLogger.i("Gate: Voice command authorized for ${outcome.profile.name} (confidence=${outcome.similarity})", "GATE")
                 return GateResult.Authorized(

@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
@@ -64,6 +65,7 @@ class VoiceInputService : Service() {
     private val parakeetModelManager: ParakeetModelManager by inject()
     private val coordinator: VoiceSessionCoordinator by inject()
     private val diagnostics: VoiceDiagnosticsManager by inject()
+    private val speakerProfileRepository: com.voxyn.security.SpeakerProfileRepository by inject()
 
     private var activeEngine      : SpeechRecognizerEngine? = null
     private var audioManager      : AudioManager? = null
@@ -71,6 +73,7 @@ class VoiceInputService : Service() {
     private var conversationWatchdog: Runnable? = null
     private var consecutiveFailures = 0
     private var currentSessionId  : String = ""
+    private var wakeLock          : android.os.PowerManager.WakeLock? = null
 
     @Volatile private var isListening = false
     @Volatile private var stopping    = false
@@ -78,21 +81,38 @@ class VoiceInputService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("VOXYN — speak your command"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("VOXYN — Always On"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("VOXYN — Always On"))
+        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        VoxynLogger.i("VoiceInputService created", "VOICE")
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        wakeLock = powerManager?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "voxyn:always_listening_wakelock")?.apply {
+            setReferenceCounted(false)
+            acquire(24 * 60 * 60 * 1000L) // 24-hour safe wake lock for 24x7 listening
+        }
+        VoxynLogger.i("VoiceInputService created (24x7 Always-Listening Mode)", "VOICE")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopping = false
         when (intent?.action) {
-            ACTION_START_LISTENING -> {
-                val sid = intent.getStringExtra(EXTRA_SESSION_ID)
+            ACTION_STOP_LISTENING -> {
+                stopping = true
+                stopListeningInternal()
+                stopSelf()
+            }
+            else -> {
+                val sid = intent?.getStringExtra(EXTRA_SESSION_ID)
                 currentSessionId = if (!sid.isNullOrBlank()) sid else coordinator.onWakeDetected()
                 VoxynLogger.i("ACTION_START_LISTENING received (session: $currentSessionId)", "VOICE")
                 mainHandler.postDelayed({ beginListening() }, START_DELAY_MS)
             }
-            ACTION_STOP_LISTENING -> resumeWakeAndStop()
         }
         return START_STICKY
     }
@@ -102,9 +122,11 @@ class VoiceInputService : Service() {
     override fun onDestroy() {
         stopping = true
         cancelWatchdog()
-        activeEngine?.stop()
-        activeEngine = null
-        releaseAudioFocus()
+        stopListeningInternal()
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
         scope.cancel()
         VoxynLogger.i("VoiceInputService destroyed", "VOICE")
         super.onDestroy()
@@ -115,9 +137,13 @@ class VoiceInputService : Service() {
     private fun beginListening() {
         if (stopping || isListening) return
         isListening = true
-        updateNotification("VOXYN — speak your command")
+        updateNotification("VOXYN — Always On")
 
         requestAudioFocus()
+
+        if (currentSessionId.isBlank() || coordinator.getState() == SessionState.IDLE) {
+            currentSessionId = coordinator.onWakeDetected()
+        }
 
         // First-time setup: if Parakeet isn't downloaded yet, fetch it in the
         // background (progressed in the notification) while Vosk handles commands.
@@ -137,9 +163,8 @@ class VoiceInputService : Service() {
                     isListening = false
                     activeEngine = null
                     releaseAudioFocus()
-                    updateNotification("VOXYN — voice unavailable")
-                    tts.speak("My speech engine is not ready yet.")
-                    mainHandler.postDelayed({ resumeWakeAndStop() }, 1_500L)
+                    updateNotification("VOXYN — voice engine unavailable")
+                    mainHandler.postDelayed({ if (!stopping) beginListening() }, 3_000L)
                 }
                 return
             }
@@ -147,38 +172,45 @@ class VoiceInputService : Service() {
             return
         }
         coordinator.onListeningStarted(currentSessionId, recognizerEngine::class.simpleName ?: "Engine")
-        VoxynLogger.i("Command listening started (${recognizerEngine::class.simpleName})", "VOICE")
+        VoxynLogger.i("Always-listening active (${recognizerEngine::class.simpleName})", "VOICE")
     }
 
     private val engineListener: SpeechRecognizerEngine.Listener = object : SpeechRecognizerEngine.Listener {
         override fun onSpeechDetected() {
-            mainHandler.post {
-                if (!stopping) updateNotification("VOXYN — listening...")
-            }
+            // Keep completely silent & invisible: do not reveal or change notification until verified owner
         }
 
         override fun onPartial(text: String) {
-            if (text.isBlank()) return
-            mainHandler.post {
-                if (!stopping) updateNotification("VOXYN — \"$text\"...")
-            }
+            // Keep completely silent & invisible: do not reveal or change notification until verified owner
         }
 
         override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray?) {
             mainHandler.post {
                 if (stopping) return@post
-                val gateOutcome = coordinator.onSpeechResult(currentSessionId, text, audioDurationMs, audioSamples)
-                when (gateOutcome) {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                val isMediaPlaying = audioManager?.isMusicActive == true
+                val gateOutcome = coordinator.onSpeechResult(currentSessionId, text, audioDurationMs, audioSamples, isMediaPlaying)
+                val profiles = speakerProfileRepository.getAllProfiles()
+                val isAuthorized = when (gateOutcome) {
                     is com.voxyn.security.GateResult.Authorized -> {
-                        handleResult(text)
+                        // If profiles are enrolled, ONLY respond if the speaker is the owner!
+                        if (profiles.isNotEmpty()) gateOutcome.isOwner else true
                     }
-                    is com.voxyn.security.GateResult.Denied -> {
-                        VoxynLogger.w("Voice command denied: ${gateOutcome.reason}", "VOICE")
-                        updateNotification("VOXYN — voice not recognized")
-                        tts.speak(gateOutcome.userFeedback) {
-                            endSessionWithStandingBy()
-                        }
-                    }
+                    else -> false
+                }
+
+                if (isAuthorized) {
+                    handleResult(text)
+                } else {
+                    VoxynLogger.w("Voice command rejected or unverified speaker — silently dropping (no sound, no display)", "VOICE")
+                    // If voice not recognized, won't say or show anything!
+                    coordinator.onSessionEnded()
+                    currentSessionId = ""
+                    isListening = false
+                    activeEngine?.stop()
+                    activeEngine = null
+                    releaseAudioFocus()
+                    mainHandler.postDelayed({ if (!stopping) beginListening() }, 300L)
                 }
             }
         }
@@ -233,11 +265,12 @@ class VoiceInputService : Service() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
+        releaseAudioFocus()
         cancelWatchdog()
         consecutiveFailures = 0
-        updateNotification("Processing...")
+        updateNotification("Processing: \"$text\"...")
 
-        VoxynLogger.i("Command: \"$text\"", "VOICE")
+        VoxynLogger.i("Executing command: \"$text\"", "VOICE")
         session.addTurn(ConversationTurn(userInput = text, action = "", response = ""))
         engine.process(text)
         waitForEngineThenContinue()
@@ -251,15 +284,11 @@ class VoiceInputService : Service() {
             }
             mainHandler.post {
                 if (stopping) return@post
-                if (session.isWithinWindow()) {
-                    VoxynLogger.i("Conversation window open — listening for follow-up", "VOICE")
-                    updateNotification("VOXYN — go on, I'm listening")
-                    startWindowWatchdog()
-                    beginListening()
-                } else {
-                    VoxynLogger.i("Conversation window expired — standing by", "VOICE")
-                    endSessionWithStandingBy()
-                }
+                coordinator.onSessionEnded()
+                currentSessionId = ""
+                VoxynLogger.i("Command execution complete — resuming continuous listening", "VOICE")
+                updateNotification("VOXYN — Always On")
+                beginListening()
             }
         }
     }
@@ -269,71 +298,18 @@ class VoiceInputService : Service() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
-        if (session.turns.isEmpty()) {
-            // First listen after the wake phrase — retry once before returning to IDLE
-            // so a slow start or a VAD hiccup doesn't end the conversation prematurely.
-            retryOrGiveUp(reason, REARM_DELAY_MS)
-        } else if (session.isWithinWindow()) {
-            // Follow-up listen: re-arm once; the second consecutive failure ends the session
-            retryOrGiveUp(reason, REARM_DELAY_MS)
-        } else {
-            VoxynLogger.i("Silence after window — standing by", "VOICE")
-            endSessionWithStandingBy()
-        }
+        releaseAudioFocus()
+        mainHandler.postDelayed({ if (!stopping) beginListening() }, 100L)
     }
 
-    /**
-     * Counts a failed listen attempt. Retries once with a backoff, then gives up:
-     * a first-command failure returns to wake detection, a follow-up failure
-     * ends the conversation with "Standing by.".
-     */
-    private fun retryOrGiveUp(reason: String, backoffMs: Long) {
-        if (stopping) return
-        consecutiveFailures++
-        val maxAttempts = if (session.turns.isEmpty()) {
-            FIRST_COMMAND_MAX_ATTEMPTS
-        } else {
-            MAX_CONSECUTIVE_FAILURES
-        }
-
-        if (consecutiveFailures >= maxAttempts) {
-            VoxynLogger.w("Giving up after $consecutiveFailures failed listens ($reason)", "VOICE")
-            if (session.turns.isEmpty()) {
-                VoxynLogger.i("No command heard after $maxAttempts attempts — back to wake detection", "VOICE")
-                updateNotification("VOXYN — say Hey VOXYN")
-                resumeWakeAndStop()
-            } else {
-                endSessionWithStandingBy()
-            }
-            return
-        }
-
-        VoxynLogger.w("No speech — retrying in ${backoffMs}ms (failure #$consecutiveFailures)", "VOICE")
-        updateNotification("VOXYN — retrying...")
-        mainHandler.postDelayed({ if (!stopping) beginListening() }, backoffMs)
-    }
-
-    private fun endSessionWithStandingBy() {
-        if (stopping) return
+    private fun stopListeningInternal() {
+        isListening = false
         cancelWatchdog()
-        session.end()
+        activeEngine?.stop()
+        activeEngine = null
+        releaseAudioFocus()
         coordinator.onSessionEnded()
-        updateNotification("VOXYN — say Hey VOXYN")
-        // Do not resume the wake recognizer until the spoken status is finished,
-        // otherwise it can hear VOXYN's own voice as a wake phrase.
-        tts.speak("Standing by.") { resumeWakeAndStop() }
-    }
-
-    private fun startWindowWatchdog() {
-        cancelWatchdog()
-        val runnable = Runnable {
-            VoxynLogger.i("30s conversation window elapsed — standing by", "VOICE")
-            if (session.isActive) {
-                endSessionWithStandingBy()
-            }
-        }
-        conversationWatchdog = runnable
-        mainHandler.postDelayed(runnable, session.windowMs)
+        currentSessionId = ""
     }
 
     private fun cancelWatchdog() {
@@ -344,20 +320,7 @@ class VoiceInputService : Service() {
     private fun resumeWakeAndStop() {
         if (stopping) return
         stopping = true
-        cancelWatchdog()
-        activeEngine?.stop()
-        activeEngine = null
-        releaseAudioFocus()
-        try {
-            startService(
-                Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_RESUME
-                }
-            )
-            VoxynLogger.i("WakeWordService resumed", "VOICE")
-        } catch (e: Exception) {
-            VoxynLogger.e("Failed to resume WakeWordService: ${e.message}", tag = "VOICE")
-        }
+        stopListeningInternal()
         stopSelf()
     }
 

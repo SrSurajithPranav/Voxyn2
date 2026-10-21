@@ -23,7 +23,13 @@ class AccessibilityCapability(
         "GO_BACK",
         "GO_HOME",
         "READ_NOTIFICATIONS",
-        "REMEMBER_THIS"
+        "REMEMBER_THIS",
+        "RECENTS",
+        "QUICK_SETTINGS",
+        "SPLIT_SCREEN",
+        "CLICK_ELEMENT",
+        "INPUT_TEXT",
+        "READ_SCREEN"
     )
 
     override val riskLevel: CapabilityRisk = CapabilityRisk.LOW
@@ -74,6 +80,49 @@ class AccessibilityCapability(
                     val success = service.performReadNotifications()
                     if (success) PhaseResult.Success("Opened notifications")
                     else PhaseResult.Failure("Could not open notifications")
+                }
+                "RECENTS" -> {
+                    val success = service.performOpenRecents()
+                    if (success) PhaseResult.Success("Opened recent apps")
+                    else PhaseResult.Failure("Could not open recent apps")
+                }
+                "QUICK_SETTINGS" -> {
+                    val success = service.performQuickSettings()
+                    if (success) PhaseResult.Success("Opened quick settings")
+                    else PhaseResult.Failure("Could not open quick settings")
+                }
+                "SPLIT_SCREEN" -> {
+                    val success = service.performSplitScreen()
+                    if (success) PhaseResult.Success("Split screen toggled")
+                    else PhaseResult.Failure("Could not toggle split screen")
+                }
+                "CLICK_ELEMENT" -> {
+                    val target = step.params["target"] ?: step.params["query"] ?: ""
+                    if (target.isBlank()) {
+                        PhaseResult.Failure("No element target specified")
+                    } else {
+                        val clicked = service.performClickByText(target)
+                        if (clicked) PhaseResult.Success("Clicked $target")
+                        else PhaseResult.Failure("Could not find '$target' on screen")
+                    }
+                }
+                "INPUT_TEXT" -> {
+                    val text = step.params["text"] ?: step.params["query"] ?: ""
+                    if (text.isBlank()) {
+                        PhaseResult.Failure("No text specified to type")
+                    } else {
+                        val typed = service.performInputText(text)
+                        if (typed) PhaseResult.Success("Typed: $text")
+                        else PhaseResult.Failure("No active input field found on screen")
+                    }
+                }
+                "READ_SCREEN" -> {
+                    val text = service.currentScreenText()
+                    if (!text.isNullOrBlank()) {
+                        PhaseResult.Success("On screen: $text")
+                    } else {
+                        PhaseResult.Failure("No readable text found on screen")
+                    }
                 }
                 "REMEMBER_THIS" -> {
                     val text = service.performRememberThis()

@@ -11,6 +11,7 @@ import com.voxyn.ai.LocalModelManager
 import com.voxyn.di.appModule
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ParakeetModelManager
+import com.voxyn.voice.VoiceInputService
 import com.voxyn.wake.WakeWordService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -119,16 +120,16 @@ class VoxynApplication : Application() {
         }
         try {
             startForegroundService(
-                Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_START
+                Intent(this, VoiceInputService::class.java).apply {
+                    action = VoiceInputService.ACTION_START_LISTENING
                 }
             )
-            VoxynLogger.i("WakeWordService started from Application", "APP")
+            VoxynLogger.i("VoiceInputService started from Application (Always-Listening Mode)", "APP")
         } catch (e: Exception) {
             // On Android 14+ (SDK 34+) calling startForegroundService from Application.onCreate
             // throws ForegroundServiceStartNotAllowedException when the app is not yet in the
             // foreground. MainActivity.onResume → startVoxynServices() will retry once visible.
-            VoxynLogger.w("Could not start WakeWordService from Application (will retry from Activity): ${e.message}", "APP")
+            VoxynLogger.w("Could not start VoiceInputService from Application (will retry from Activity): ${e.message}", "APP")
         }
     }
 }

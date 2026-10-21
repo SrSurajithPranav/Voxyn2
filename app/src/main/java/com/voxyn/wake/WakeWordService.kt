@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
@@ -59,9 +60,12 @@ class WakeWordService : Service() {
         private const val MODEL_RETRY_MS  = 10_000L
         private const val TTS_MAX_WAIT_MS = 5_000L
 
-        private const val GRAMMAR = """["hey voxyn", "hi voxyn", "okay voxyn", "ok voxyn", "voxyn", "hey voxin", "voxin", "[unk]"]"""
+        private const val GRAMMAR = """["hey voxyn", "hi voxyn", "okay voxyn", "ok voxyn", "voxyn", "hey voxin", "voxin", "hey vixen", "hi vixen", "okay vixen", "[unk]"]"""
 
-        val WAKE_REGEX = Regex("""\b(?:hey\s+voxyn|hi\s+voxyn|okay\s+voxyn|ok\s+voxyn|voxyn|hey\s+voxin|voxin)\b""", RegexOption.IGNORE_CASE)
+        val WAKE_REGEX = Regex(
+            """(?:\b(?:hey|hi|okay|ok)\s+(?:voxyn|voxin|vixen|\[unk\])|\b(?:voxyn|voxin|vixen)\b)""",
+            RegexOption.IGNORE_CASE
+        )
 
         fun isWakeTrigger(text: String): Boolean =
             text.isNotBlank() && WAKE_REGEX.containsMatchIn(text)
@@ -91,10 +95,17 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("VOXYN — say Hey VOXYN"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("VOXYN — listening"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("VOXYN — listening"))
+        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         VoxynLogger.i("WakeWordService created", "WAKE")
-        loadModelAndStart()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -104,26 +115,23 @@ class WakeWordService : Service() {
                 stopAll()
                 stopSelf()
             }
-            ACTION_START_LISTENING -> {
-                // In-app mic button — skip the wake phrase, go straight to the command
-                stopped = false
-                session.end()
-                stopDetection()
-                startVoiceInput()
-            }
-            ACTION_RESUME -> {
-                // VoiceInputService finished — resume wake word detection
-                stopped = false
-                VoxynLogger.i("ACTION_RESUME — restarting Vosk detection", "WAKE")
-                startDetection()
-            }
             else -> {
-                // ACTION_START or null (START_STICKY restart)
-                stopped = false
-                startDetection()
+                stopped = true
+                stopAll()
+                try {
+                    startForegroundService(
+                        Intent(this, VoiceInputService::class.java).apply {
+                            action = VoiceInputService.ACTION_START_LISTENING
+                        }
+                    )
+                    VoxynLogger.i("WakeWordService forwarded to VoiceInputService (Always Listening Mode)", "WAKE")
+                } catch (e: Exception) {
+                    VoxynLogger.e("Failed to forward to VoiceInputService: ${e.message}", tag = "WAKE")
+                }
+                stopSelf()
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -149,6 +157,13 @@ class WakeWordService : Service() {
                 if (recognizer == null) {
                     recognizer = runCatching {
                         Recognizer(m, SAMPLE_RATE.toFloat(), GRAMMAR)
+                    }.recoverCatching {
+                        modelProvider.invalidateModel()
+                        val fresh = modelProvider.getModel()
+                        if (fresh != null) {
+                            model = fresh
+                            Recognizer(fresh, SAMPLE_RATE.toFloat(), GRAMMAR)
+                        } else throw it
                     }.onFailure {
                         VoxynLogger.e("Failed to create Vosk recognizer: ${it.message}", tag = "WAKE")
                     }.getOrNull()
@@ -325,7 +340,7 @@ class WakeWordService : Service() {
         // model-internal native data, so freeing the model first corrupts the heap.
         try { recognizer?.close() } catch (_: Exception) {}
         recognizer = null
-        try { model?.close() } catch (_: Exception) {}
+        // Do NOT close model here — it is a shared singleton managed by VoskModelProvider.
         model = null
         VoxynLogger.i("All wake activity stopped", "WAKE")
     }

@@ -19,6 +19,13 @@ class WorldTimeProviderTest {
     @Test
     fun `single-zone country returns one time`() {
         assertNotNull(provider.timeIn("india"))
+        val italy = provider.timeIn("italy")
+        assertNotNull(italy)
+        assertTrue(italy.orEmpty().contains("Italy"))
+
+        val uk = provider.timeIn("uk")
+        assertNotNull(uk)
+        assertTrue(uk.orEmpty().contains("the UK"))
     }
 
     @Test

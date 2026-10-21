@@ -66,6 +66,43 @@ class IntentRouter {
             Regex("clip\\s*this", RegexOption.IGNORE_CASE)
         )),
 
+        // ─── Voice Access & UI Operating Layer ────────────────────────
+        IntentDef("CLICK_ELEMENT", 0.94f, listOf(
+            Regex("^(?:click|tap|press)\\s+(?:on\\s+)?(?:the\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:click|tap|press)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("target" to 1)),
+
+        IntentDef("INPUT_TEXT", 0.94f, listOf(
+            Regex("^(?:type|enter|write|input)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("text" to 1)),
+
+        IntentDef("RECENTS", 0.95f, listOf(
+            Regex("^(?:open\\s+)?recents?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+|show\\s+)?recent\\s+apps?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+)?app\\s+switcher$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("QUICK_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open\\s+|show\\s+)?quick\\s+settings?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+|show\\s+)?control\\s+center$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SPLIT_SCREEN", 0.95f, listOf(
+            Regex("^(?:open\\s+|start\\s+|toggle\\s+)?split\\s+screen$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("HOTSPOT_ON", 0.95f, listOf(
+            Regex("^(?:turn\\s+on|enable|start)\\s+(?:the\\s+)?(?:personal\\s+)?hotspot$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("HOTSPOT_OFF", 0.95f, listOf(
+            Regex("^(?:turn\\s+off|disable|stop)\\s+(?:the\\s+)?(?:personal\\s+)?hotspot$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("READ_SCREEN", 0.94f, listOf(
+            Regex("^(?:what(?:'s|\\s+is)\\s+on\\s+(?:my\\s+)?screen|read\\s+(?:the\\s+|my\\s+)?screen|summarize\\s+(?:the\\s+|my\\s+)?screen)$", RegexOption.IGNORE_CASE)
+        )),
+
         // ─── Communication & Messaging ────────────────────────────────
         // MESSAGE_GROUP out-ranks SEND_MESSAGE so "message the family group
         // saying …" is never parsed as a recipient. SEND_WHATSAPP_MESSAGE and
@@ -147,6 +184,27 @@ class IntentRouter {
             Regex("volume\\s*(down|decrease|lower|quiet)", RegexOption.IGNORE_CASE),
             Regex("(decrease|lower|turn\\s*down)\\s*(the\\s*)?volume", RegexOption.IGNORE_CASE),
             Regex("^quieter$", RegexOption.IGNORE_CASE)
+        )),
+
+        // ─── Volume & Device Settings ─────────────────────────────────
+        IntentDef("VOLUME_MAX", 0.95f, listOf(
+            Regex("(?:volume\\s*(?:to\\s*)?max|max\\s*volume|full\\s*volume|turn\\s*volume\\s*(?:all\\s*the\\s*way\\s*)?up)", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("VOLUME_MIN", 0.95f, listOf(
+            Regex("(?:volume\\s*(?:to\\s*)?min|min\\s*volume|lowest\\s*volume|minimum\\s*volume)", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("MUTE", 0.95f, listOf(
+            Regex("^(?:mute|mute\\s+volume|mute\\s+audio)$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+(?:phone\\s+)?settings?$", RegexOption.IGNORE_CASE),
+            Regex("^settings?$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_WIFI_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+wifi\\s+settings?$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_BLUETOOTH_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+bluetooth\\s+settings?$", RegexOption.IGNORE_CASE)
         )),
 
         // ─── Silent ────────────────────────────────────────────────────
@@ -269,7 +327,16 @@ class IntentRouter {
             Regex("^start\\s+recording\\s+video$", RegexOption.IGNORE_CASE)
         ), paramExtractors = mapOf("duration_seconds" to 1)),
 
-        // ─── Open App ──────────────────────────────────────────────────
+        // ─── App Management ───────────────────────────────────────────
+        IntentDef("CLOSE_APP", 0.94f, listOf(
+            Regex("^(?:close|kill|exit|quit|stop)\\s+(?:the\\s+)?(.+?)(?:\\s+app)?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+(?:this|current|active)(?:\\s+app)?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+app$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+this$", RegexOption.IGNORE_CASE),
+            Regex("^close$", RegexOption.IGNORE_CASE),
+            Regex("^exit$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("app_name" to 1)),
+
         IntentDef("OPEN_APP", 0.88f, listOf(
             Regex("open\\s+the\\s+(.+?)\\s*app", RegexOption.IGNORE_CASE),
             Regex("^open\\s+(.+)$", RegexOption.IGNORE_CASE),

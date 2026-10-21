@@ -9,7 +9,11 @@ data class SpeakerProfile(
     val name: String,
     val isOwner: Boolean,
     val voiceprint: FloatArray,
-    val enrolledAtMs: Long = System.currentTimeMillis()
+    val enrolledAtMs: Long = System.currentTimeMillis(),
+    val pitch: Float = 1.0f,
+    val speechRate: Float = 1.0f,
+    val timbre: String = "male",
+    val sampleVoiceprints: List<FloatArray> = listOf(voiceprint)
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

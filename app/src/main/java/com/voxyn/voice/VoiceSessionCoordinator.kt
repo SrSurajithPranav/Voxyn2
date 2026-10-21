@@ -58,7 +58,8 @@ class VoiceSessionCoordinator(
         sessionId: String,
         transcript: String,
         audioDurationMs: Long,
-        audioSamples: ShortArray?
+        audioSamples: ShortArray?,
+        isMediaActive: Boolean = false
     ): GateResult {
         if (sessionId != activeSessionId && activeSessionId.isNotEmpty()) {
             VoxynLogger.w("Session mismatch on speech result — ignoring", "COORDINATOR")
@@ -70,7 +71,7 @@ class VoiceSessionCoordinator(
         diagnostics.recordTranscript(final = transcript)
         VoxynLogger.i("Session [$sessionId]: State -> VERIFYING", "COORDINATOR")
 
-        val gateOutcome = gate.verifyAndAuthorize(InputSource.VOICE, audioSamples, transcript)
+        val gateOutcome = gate.verifyAndAuthorize(InputSource.VOICE, audioSamples, transcript, isMediaActive)
         when (gateOutcome) {
             is GateResult.Authorized -> {
                 currentState.set(SessionState.PROCESSING)

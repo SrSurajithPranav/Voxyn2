@@ -18,18 +18,18 @@ class BootReceiver : BroadcastReceiver() {
 
         VoxynLogger.i("Boot complete — restarting VOXYN services", "BOOT")
 
-        // Restart the always-on wake service (BOOT_COMPLETED is an allowed FGS start)
+        // Restart the always-on voice service on boot (BOOT_COMPLETED is an allowed FGS start)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED) {
             try {
                 context.startForegroundService(
-                    Intent(context, WakeWordService::class.java).apply {
-                        action = WakeWordService.ACTION_START
+                    Intent(context, com.voxyn.voice.VoiceInputService::class.java).apply {
+                        action = com.voxyn.voice.VoiceInputService.ACTION_START_LISTENING
                     }
                 )
-                VoxynLogger.i("WakeWordService started on boot", "BOOT")
+                VoxynLogger.i("VoiceInputService started on boot (24x7 Always-Listening Mode)", "BOOT")
             } catch (e: Exception) {
-                VoxynLogger.e("Boot WakeWordService start failed: ${e.message}", tag = "BOOT")
+                VoxynLogger.e("Boot VoiceInputService start failed: ${e.message}", tag = "BOOT")
             }
         }
 

@@ -95,23 +95,47 @@ class SpeakerVerifierTest {
     }
 
     @Test
-    fun `maximum five speaker profiles enforced`() {
-        repeat(5) { i ->
+    fun `maximum 25 speaker profiles enforced`() {
+        repeat(25) { i ->
             val tone = ShortArray(16000) { idx ->
-                (Math.sin(2.0 * Math.PI * (100.0 + i * 50) * idx / 16000.0) * 8000).toInt().toShort()
+                (Math.sin(2.0 * Math.PI * (100.0 + i * 20) * idx / 16000.0) * 8000).toInt().toShort()
             }
             val vp = verifier.extractVoiceprint(tone)
             val res = repository.enrollProfile(SpeakerProfile(id = "profile_$i", name = "Speaker $i", isOwner = i == 0, voiceprint = vp))
             assertTrue(res)
         }
-        assertEquals(5, repository.getAllProfiles().size)
+        assertEquals(25, repository.getAllProfiles().size)
 
-        // Attempting to enroll 6th profile should be rejected
+        // Attempting to enroll 26th profile should be rejected
         val excessTone = ShortArray(16000) { idx ->
-            (Math.sin(2.0 * Math.PI * 600.0 * idx / 16000.0) * 8000).toInt().toShort()
+            (Math.sin(2.0 * Math.PI * 700.0 * idx / 16000.0) * 8000).toInt().toShort()
         }
         val excessVp = verifier.extractVoiceprint(excessTone)
-        val excessRes = repository.enrollProfile(SpeakerProfile(id = "profile_6", name = "Speaker 6", isOwner = false, voiceprint = excessVp))
+        val excessRes = repository.enrollProfile(SpeakerProfile(id = "profile_26", name = "Speaker 26", isOwner = false, voiceprint = excessVp))
         assertFalse(excessRes)
+    }
+
+    @Test
+    fun `profile with multiple samples matches candidate from any sample`() {
+        val sample1Audio = ShortArray(16000) { idx ->
+            (Math.sin(2.0 * Math.PI * 180.0 * idx / 16000.0) * 8000).toInt().toShort()
+        }
+        val sample2Audio = ShortArray(16000) { idx ->
+            (Math.sin(2.0 * Math.PI * 240.0 * idx / 16000.0) * 8000).toInt().toShort()
+        }
+
+        val vp1 = verifier.extractVoiceprint(sample1Audio)
+        val vp2 = verifier.extractVoiceprint(sample2Audio)
+
+        val profile = SpeakerProfile(id = "owner", name = "Owner", isOwner = true, voiceprint = vp1)
+        repository.enrollProfile(profile)
+        repository.addSampleToProfile("owner", vp2)
+
+        val updated = repository.getProfile("owner")
+        assertEquals(2, updated?.sampleVoiceprints?.size)
+
+        // Candidate matching sample 2 should verify successfully
+        val result = verifier.verify(sample2Audio)
+        assertTrue(result is VerificationResult.Verified)
     }
 }

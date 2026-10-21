@@ -12,10 +12,12 @@ class AppCapabilityTest {
 
     @Test
     fun `app capability metadata and verification`() = runBlocking {
+        val context = android.content.ContextWrapper(null)
         val appCapability = AppCapability(
+            context,
             AppLaunchResolver(
-                android.content.ContextWrapper(null),
-                com.voxyn.apps.AppCatalog(android.content.ContextWrapper(null))
+                context,
+                com.voxyn.apps.AppCatalog(context)
             )
         )
 
