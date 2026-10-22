@@ -43,7 +43,12 @@ open class WikipediaSearchProvider : WebSearchProvider {
                 lastTopic = topic
                 val answer = condense(extract, query)
                 VoxynLogger.i("[AI] Wikipedia: \"$topic\" → ${answer.length} chars", "AI")
-                WebSearchResult(answer, "Wikipedia")
+                val sourceUrl = json.optJSONObject("content_urls")
+                    ?.optJSONObject("desktop")
+                    ?.optString("page")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "https://en.wikipedia.org/wiki/${URLEncoder.encode(topic.replace(' ', '_'), "UTF-8")}"
+                WebSearchResult(answer, "Wikipedia", sourceUrl)
             }.getOrNull()
         }
     }
@@ -61,7 +66,12 @@ open class WikipediaSearchProvider : WebSearchProvider {
         topic = topic
             .replace(Regex("^(tell me|for me|please|about)\\s+"), "")
             .replace(Regex("\\b(the|a|an)\\b"), "")
+            .replace(Regex("\\b(right now|currently|as of (?:today|now)|current|latest|today)\\b"), "")
             .trim()
+        topic = topic.replace(Regex("\\s+"), " ")
+        if (topic == "president of us" || topic == "president of united states") {
+            topic = "President of the United States"
+        }
 
         // Follow-up referents reuse the previous topic ("how many people live there")
         if (topic.length < 4 || Regex("\\b(there|it|them|that|then|here)\\b").containsMatchIn(q)) {

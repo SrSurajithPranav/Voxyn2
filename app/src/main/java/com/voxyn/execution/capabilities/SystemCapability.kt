@@ -265,8 +265,7 @@ class SystemCapability(
         return runCatching {
             when (step.actionType) {
                 "VOLUME_UP", "VOLUME_DOWN", "SET_VOLUME" -> {
-                    val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    if (vol >= 0) VerificationOutcome.Success else VerificationOutcome.Failure
+                    VerificationOutcome.Unverified
                 }
                 "SILENT_MODE" -> {
                     if (audioManager.ringerMode == AudioManager.RINGER_MODE_SILENT) VerificationOutcome.Success
@@ -280,8 +279,7 @@ class SystemCapability(
                     if (audioManager.ringerMode == AudioManager.RINGER_MODE_NORMAL) VerificationOutcome.Success
                     else VerificationOutcome.PartialSuccess
                 }
-                "BATTERY_STATUS" -> VerificationOutcome.Success
-                "FLASHLIGHT_ON", "FLASHLIGHT_OFF" -> VerificationOutcome.Success
+                "BATTERY_STATUS", "FLASHLIGHT_ON", "FLASHLIGHT_OFF" -> VerificationOutcome.Unverified
                 "WIFI_ON", "WIFI_OFF" -> {
                     val enabled = wifiManager?.isWifiEnabled
                     if (enabled != null) {
@@ -299,7 +297,7 @@ class SystemCapability(
                         else VerificationOutcome.Unverified
                     } else VerificationOutcome.Unverified
                 }
-                "SCREENSHOT", "LOCK_PHONE" -> VerificationOutcome.Success
+                "SCREENSHOT", "LOCK_PHONE" -> VerificationOutcome.Unverified
                 else -> VerificationOutcome.Unverified
             }
         }.getOrDefault(VerificationOutcome.Unverified)

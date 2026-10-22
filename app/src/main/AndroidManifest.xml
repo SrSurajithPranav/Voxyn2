@@ -69,12 +69,6 @@
         </activity>
 
         <service
-            android:name=".wake.WakeWordService"
-            android:exported="false"
-            android:foregroundServiceType="microphone"
-            android:stopWithTask="false" />
-
-        <service
             android:name=".voice.VoiceInputService"
             android:exported="false"
             android:foregroundServiceType="microphone"

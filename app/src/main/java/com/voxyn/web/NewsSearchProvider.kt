@@ -32,23 +32,40 @@ open class NewsSearchProvider : WebSearchProvider {
                 return@withContext null
             }
             val xml = conn.inputStream.bufferedReader().readText()
-            val titles = parseNewsTitles(xml).map { cleanNewsTitle(it) }.filter { it.isNotBlank() }.distinct()
-            if (titles.isEmpty()) {
+            val items = parseNewsItems(xml)
+                .map { it.copy(title = cleanNewsTitle(it.title)) }
+                .filter { it.title.isNotBlank() }
+                .distinctBy { it.title }
+            if (items.isEmpty()) {
                 VoxynLogger.w("Google News no results for '$q'", "WEB")
                 return@withContext null
             }
-            VoxynLogger.i("[WEB] News results: ${titles.size} for '$q'", "WEB")
-            val body = titles.take(3).joinToString(". ") { it.trimEnd('.') }
-            WebSearchResult("Here's the latest on $q: $body.", "Google News")
+            VoxynLogger.i("[WEB] News results: ${items.size} for '$q'", "WEB")
+            val body = items.take(3).joinToString(". ") { it.title.trimEnd('.') }
+            WebSearchResult(
+                "Here's the latest on $q: $body.",
+                "Google News",
+                sourceUrl = items.firstOrNull()?.url
+            )
         }.getOrNull()
     }
 
-    private fun parseNewsTitles(xml: String): List<String> =
+    private data class NewsItem(val title: String, val url: String?, val publishedAtEpochMs: Long?)
+
+    private fun parseNewsItems(xml: String): List<NewsItem> =
         Regex("<item>.*?</item>", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml)
             .mapNotNull { m ->
-                Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
-                    .find(m.value)?.groupValues?.get(1)?.let { unescape(it) }
+                val item = m.value
+                val title = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
+                    .find(item)?.groupValues?.get(1)?.let(::unescape) ?: return@mapNotNull null
+                val url = Regex("<link>(.*?)</link>", RegexOption.DOT_MATCHES_ALL)
+                    .find(item)?.groupValues?.get(1)?.trim()?.takeIf { it.startsWith("http") }
+                val publishedAt = Regex("<pubDate>(.*?)</pubDate>", RegexOption.DOT_MATCHES_ALL)
+                    .find(item)?.groupValues?.get(1)?.trim()?.let { value ->
+                        runCatching { java.time.ZonedDateTime.parse(value, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() }.getOrNull()
+                    }
+                NewsItem(title, url, publishedAt)
             }
             .toList()
 

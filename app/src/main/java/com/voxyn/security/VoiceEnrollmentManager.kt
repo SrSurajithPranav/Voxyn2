@@ -9,7 +9,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import androidx.core.content.ContextCompat
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
+import com.voxyn.voice.VoiceInputService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -72,7 +72,7 @@ class VoiceEnrollmentManager(
             )
         }
 
-        pauseWakeWordService()
+        pauseContinuousListening()
 
         try {
             val totalSamplesNeeded = SAMPLE_RATE * ENROLLMENT_DURATION_SEC
@@ -124,7 +124,7 @@ class VoiceEnrollmentManager(
             VoxynLogger.i("Successfully enrolled voice profile: \"${profile.name}\" (owner=${profile.isOwner})", "SPEAKER")
             Result.success(profile)
         } finally {
-            resumeWakeWordService()
+            resumeContinuousListening()
         }
     }
 
@@ -199,7 +199,7 @@ class VoiceEnrollmentManager(
             return@withContext Result.failure(IllegalArgumentException("Profile not found: $profileId"))
         }
 
-        pauseWakeWordService()
+        pauseContinuousListening()
         try {
             val totalSamples = SAMPLE_RATE * ENROLLMENT_DURATION_SEC
             val samples = recordPcmAudio(totalSamples, onProgress)
@@ -215,7 +215,7 @@ class VoiceEnrollmentManager(
             val updated = repository.getProfile(profileId)
             Result.success(updated?.sampleVoiceprints?.size ?: 1)
         } finally {
-            resumeWakeWordService()
+            resumeContinuousListening()
         }
     }
 
@@ -265,7 +265,7 @@ class VoiceEnrollmentManager(
             return@withContext Result.success(VerificationResult.NoProfilesEnrolled)
         }
 
-        pauseWakeWordService()
+        pauseContinuousListening()
 
         try {
             val totalSamplesNeeded = SAMPLE_RATE * TEST_DURATION_SEC
@@ -278,7 +278,7 @@ class VoiceEnrollmentManager(
             val result = verifier.verify(samples)
             Result.success(result)
         } finally {
-            resumeWakeWordService()
+            resumeContinuousListening()
         }
     }
 
@@ -357,27 +357,27 @@ class VoiceEnrollmentManager(
         }
     }
 
-    private fun pauseWakeWordService() {
+    private fun pauseContinuousListening() {
         try {
-            val stopIntent = Intent(context, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_STOP
+            val stopIntent = Intent(context, VoiceInputService::class.java).apply {
+                action = VoiceInputService.ACTION_STOP_LISTENING
             }
             context.startService(stopIntent)
-            VoxynLogger.d("Paused WakeWordService for voice recording", "SPEAKER")
+            VoxynLogger.d("Paused continuous voice listening for enrollment recording", "SPEAKER")
         } catch (e: Exception) {
-            VoxynLogger.w("Could not pause WakeWordService: ${e.message}", "SPEAKER")
+            VoxynLogger.w("Could not pause continuous listening: ${e.message}", "SPEAKER")
         }
     }
 
-    private fun resumeWakeWordService() {
+    private fun resumeContinuousListening() {
         try {
-            val startIntent = Intent(context, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_START
+            val startIntent = Intent(context, VoiceInputService::class.java).apply {
+                action = VoiceInputService.ACTION_START_LISTENING
             }
-            context.startService(startIntent)
-            VoxynLogger.d("Resumed WakeWordService after voice recording", "SPEAKER")
+            androidx.core.content.ContextCompat.startForegroundService(context, startIntent)
+            VoxynLogger.d("Resumed continuous voice listening after enrollment recording", "SPEAKER")
         } catch (e: Exception) {
-            VoxynLogger.w("Could not resume WakeWordService: ${e.message}", "SPEAKER")
+            VoxynLogger.w("Could not resume continuous listening: ${e.message}", "SPEAKER")
         }
     }
 }

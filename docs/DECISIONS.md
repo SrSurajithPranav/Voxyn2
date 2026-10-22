@@ -813,3 +813,39 @@ User interactions with voice assistants often involve conversational follow-ups 
 ## Review Date
 
 2026-08-29
+
+---
+
+# ADR-018
+
+## Title
+
+Web-first current facts, truthful execution status, and continuous voice readiness
+
+## Status
+
+Accepted
+
+## Context
+
+Local models can return stale answers for current facts, and invoking an Android capability does not always prove that the requested action completed. VOXYN now uses a continuously re-armed foreground voice listener without a wake phrase. Current-information requests need internet access, while ordinary commands and deterministic answers should remain usable offline.
+
+## Decision
+
+1. Current-fact questions and explicit web searches must try web providers before local or cloud language models. If no current source can answer, VOXYN must say it could not verify the answer rather than use model memory.
+2. Web-backed answers retain the provider, source URL when available, and retrieval time in the UI event stream.
+3. The engine must consume capability verification outcomes. `Unverified`, partial, or failed actions must not be reported as verified successes or increase the success trust score.
+4. Automatic retry is allowed only when the failure permits fallback and every action in the retried plan is explicitly marked safe to repeat. Until multi-step recovery is transactional, automatic retries are limited to one-step plans.
+5. Alarm times and timer durations must be parsed explicitly. Missing or ambiguous values require clarification; capability handlers must reject absent values instead of silently choosing defaults.
+6. Voice readiness uses a foreground microphone service that continuously re-arms command recognition. The product does not require a wake phrase. Users can stop listening from the HUD; Android permissions and the foreground notification remain visible controls.
+7. Internet access is permitted for current information. Cloud LLM use is optional and only enabled when a key is explicitly configured. No cloud call is required for deterministic device commands.
+
+## Consequences
+
+- Current factual answers can be slower and may fail when web providers are unavailable, but stale model knowledge is not presented as verified current information.
+- Some Android handoffs, including alarm and timer intents, are reported as unverified because the platform offers no portable read-back API.
+- Continuous listening requires persistent microphone foreground-service state and consumes more battery than a wake-word detector.
+
+## Review Date
+
+2026-10-22

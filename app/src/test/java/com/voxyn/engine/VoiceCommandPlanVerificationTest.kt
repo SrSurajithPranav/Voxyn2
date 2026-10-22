@@ -12,9 +12,7 @@ import com.voxyn.security.SpeakerProfile
 import com.voxyn.security.SpeakerProfileRepository
 import com.voxyn.security.SpeakerVerifier
 import com.voxyn.voice.VoiceChoice
-import com.voxyn.wake.WakeWordService
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -54,9 +52,8 @@ class VoiceCommandPlanVerificationTest {
     }
 
     @Test
-    fun `Test 1 - Hey VOXYN open YouTube`() {
-        val rawInput = "Hey VOXYN, open YouTube."
-        assertTrue(WakeWordService.isWakeTrigger(rawInput))
+    fun `Test 1 - open YouTube without a wake phrase`() {
+        val rawInput = "open YouTube."
 
         val normalized = normalizer.normalize(rawInput)
         assertEquals("open YouTube", normalized)
@@ -67,9 +64,8 @@ class VoiceCommandPlanVerificationTest {
     }
 
     @Test
-    fun `Test 2 - Hey VOXYN turn on Bluetooth`() {
-        val rawInput = "Hey VOXYN, turn on Bluetooth."
-        assertTrue(WakeWordService.isWakeTrigger(rawInput))
+    fun `Test 2 - turn on Bluetooth without a wake phrase`() {
+        val rawInput = "turn on Bluetooth."
 
         val normalized = normalizer.normalize(rawInput)
         assertEquals("turn on bluetooth", normalized)
@@ -79,9 +75,8 @@ class VoiceCommandPlanVerificationTest {
     }
 
     @Test
-    fun `Test 3 - Hey VOXYN set the volume to thirty percent`() {
-        val rawInput = "Hey VOXYN, set the volume to thirty percent."
-        assertTrue(WakeWordService.isWakeTrigger(rawInput))
+    fun `Test 3 - set the volume to thirty percent without a wake phrase`() {
+        val rawInput = "set the volume to thirty percent."
 
         val normalized = normalizer.normalize(rawInput)
         assertTrue(normalized.contains("30") || normalized.contains("thirty"))
@@ -92,9 +87,8 @@ class VoiceCommandPlanVerificationTest {
     }
 
     @Test
-    fun `Test 4 - Hey VOXYN what is the weather today`() {
-        val rawInput = "Hey VOXYN, what is the weather today?"
-        assertTrue(WakeWordService.isWakeTrigger(rawInput))
+    fun `Test 4 - weather question without a wake phrase`() {
+        val rawInput = "what is the weather today?"
 
         val normalized = normalizer.normalize(rawInput)
         val route = requestRouter.route(normalized)
@@ -103,20 +97,11 @@ class VoiceCommandPlanVerificationTest {
 
     @Test
     fun `Test 5 - Longer natural-language request`() {
-        val rawInput = "Hey VOXYN, explain quantum computing in simple terms for beginners"
-        assertTrue(WakeWordService.isWakeTrigger(rawInput))
+        val rawInput = "explain quantum computing in simple terms for beginners"
 
         val normalized = normalizer.normalize(rawInput)
         val route = requestRouter.route(normalized)
         assertEquals(RouteType.CONVERSATIONAL, route.type)
-    }
-
-    @Test
-    fun `Test 9 - Background conversation does not trigger wake word`() {
-        assertFalse(WakeWordService.isWakeTrigger("hey mom what is for dinner"))
-        assertFalse(WakeWordService.isWakeTrigger("talking to my colleague hey how are you"))
-        assertFalse(WakeWordService.isWakeTrigger("okay sounds good see you then"))
-        assertFalse(WakeWordService.isWakeTrigger("just wanted to say hi to everyone"))
     }
 
     @Test

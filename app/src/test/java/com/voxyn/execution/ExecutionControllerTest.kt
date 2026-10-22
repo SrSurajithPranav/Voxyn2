@@ -12,8 +12,11 @@ class ExecutionControllerTest {
 
     private class MockTestCapability(
         override val id: String,
-        override val supportedActions: Set<String>
+        override val supportedActions: Set<String>,
+        var verificationOutcome: VerificationOutcome = VerificationOutcome.Success
     ) : Capability {
+        var verifiedResult: String? = null
+
         override val riskLevel: CapabilityRisk = CapabilityRisk.LOW
         override val requiredPermissions: Set<String> = emptySet()
         override val requiresNetwork: Boolean = false
@@ -27,7 +30,8 @@ class ExecutionControllerTest {
         }
 
         override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
-            return VerificationOutcome.Success
+            verifiedResult = executionResult
+            return verificationOutcome
         }
     }
 
@@ -67,5 +71,17 @@ class ExecutionControllerTest {
 
         assertTrue(result is PhaseResult.Failure)
         assertTrue((result as PhaseResult.Failure).error.contains("Unknown action"))
+    }
+
+    @Test
+    fun `verification delegates to the capability and preserves unverified outcome`() = runBlocking {
+        val cap = MockTestCapability("mock", setOf("CUSTOM_ACTION"), VerificationOutcome.Unverified)
+        val controller = ExecutionController(CapabilityRegistry(listOf(cap)))
+        val step = ActionStep("s1", "description", "CUSTOM_ACTION")
+
+        val outcome = controller.verify(step, "Handed off to Android")
+
+        assertEquals(VerificationOutcome.Unverified, outcome)
+        assertEquals("Handed off to Android", cap.verifiedResult)
     }
 }

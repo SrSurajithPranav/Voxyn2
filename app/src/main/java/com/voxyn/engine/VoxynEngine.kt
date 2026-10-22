@@ -44,6 +44,9 @@ private data class MessageDraftState(
     val action: String
 )
 
+private data class ExecutedStep(val step: ActionStep, val result: String)
+private data class ExecutionTrace(val plan: ExecutionPlan, val steps: List<ExecutedStep>)
+
 class VoxynEngine(
     private val scope          : CoroutineScope,
     private val context        : Context,
@@ -70,6 +73,7 @@ class VoxynEngine(
     private var pendingIntent : IntentResult? = null
     private var pendingClarification : ContactClarificationState? = null
     private var pendingDraft : MessageDraftState? = null
+    private var pendingClockIntent : IntentResult? = null
     private var pipelineGen  = 0L
 
     @Volatile
@@ -96,6 +100,7 @@ class VoxynEngine(
         pendingIntent = null
         pendingClarification = null
         pendingDraft = null
+        pendingClockIntent = null
         emit(PipelineEvent.EngineInterrupted(reason))
         tts.speak("Cancelled.")
         setOverlay("IDLE")
@@ -121,6 +126,10 @@ class VoxynEngine(
                 isYesVariant(perceived) -> { runConfirmedIntent(); return }
                 isNoVariant(perceived) -> { cancelPendingConfirmation(); return }
             }
+        }
+        if (pendingClockIntent != null) {
+            continueClockClarification(perceived)
+            return
         }
         if (pendingClarification != null) {
             runContactClarification(perceived)
@@ -240,10 +249,17 @@ class VoxynEngine(
             }
             is DecisionState.AwaitingClarification -> {
                 pendingInput = perceived
-                val msg = decision.missing.firstOrNull() ?: "please clarify"
+                if (intent.action == "SET_ALARM" || intent.action == "SET_TIMER") pendingClockIntent = intent
+                val msg = when (intent.params["needs_clarification"]) {
+                    "time" -> "What time should I set the alarm for?"
+                    "AM or PM" -> "Is that AM or PM?"
+                    "duration" -> "How long should I set the timer for?"
+                    "unit" -> "Is that seconds, minutes, or hours?"
+                    else -> decision.missing.firstOrNull() ?: "Please clarify."
+                }
                 setOverlay("ERROR", msg)
-                tts.speak("I need more info: $msg.")
-                emit(PipelineEvent.ClarificationRequired(decision.missing))
+                tts.speak(msg)
+                emit(PipelineEvent.ClarificationRequired(listOf(msg)))
                 delay(1500L)
                 setOverlay("IDLE")
                 return
@@ -284,7 +300,13 @@ class VoxynEngine(
         val isSuccess = outcome is VerificationOutcome.Success
         setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
 
-        val speech = claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
+        // A generated acknowledgement must not override a failed or unverified
+        // post-condition. Only use it after the capability reports success.
+        val speech = if (outcome == VerificationOutcome.Success) {
+            claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
+        } else {
+            friendlySuccess(intent.action, intent.params, outcome)
+        }
         setOverlay("SPEAKING", speech)
         tts.speak(speech)
         conversationSession.updateLastTurn(intent.action, speech)
@@ -562,11 +584,8 @@ class VoxynEngine(
         val plan = ExecutionPlan(chainPlanSteps)
         emit(PipelineEvent.PhaseCompleted(PipelinePhase.PLAN, "Chain plan built (${chainPlanSteps.size} steps)"))
 
-        if (!claudeSpeak.isNullOrEmpty()) {
-            tts.speak(claudeSpeak)
-        }
-
         var cur = plan
+        val executionResults = mutableListOf<Pair<ActionStep, String>>()
         while (!cur.isComplete) {
             val step = cur.currentAction ?: break
             emit(PipelineEvent.ExecutionStepStarted(step))
@@ -585,16 +604,27 @@ class VoxynEngine(
                 return
             }
 
-            emit(PipelineEvent.ExecutionStepCompleted(step, (result as PhaseResult.Success).value))
+            val value = (result as PhaseResult.Success).value
+            executionResults += step to value
+            emit(PipelineEvent.ExecutionStepCompleted(step, value))
             cur = cur.advance()
             delay(500L) // 500ms gap between steps
         }
 
-        val outcome = VerificationOutcome.Success
+        val outcomes = executionResults.map { (step, result) -> executor.verify(step, result) }
+        val outcome = combineVerification(outcomes)
         emit(PipelineEvent.VerificationResult(outcome))
-        setOverlay("SUCCESS", "Chain complete")
-        tts.speak("Sequence completed.")
-        conversationSession.updateLastTurn(action, claudeSpeak ?: "Sequence completed.")
+        val chainResponse = when (outcome) {
+            VerificationOutcome.Success -> "Sequence completed."
+            VerificationOutcome.PartialSuccess -> "Sequence completed, but some steps were only partly verified."
+            VerificationOutcome.Unverified -> "Sequence ran, but I couldn't verify every step."
+            VerificationOutcome.NeedsRollback -> "A step needs to be undone. Please check the device."
+            VerificationOutcome.Failure -> "The sequence ran, but verification failed."
+        }
+        setOverlay(if (outcome == VerificationOutcome.Success) "SUCCESS" else "ERROR", "Chain result")
+        val finalResponse = if (outcome == VerificationOutcome.Success) claudeSpeak ?: chainResponse else chainResponse
+        tts.speak(finalResponse)
+        conversationSession.updateLastTurn(action, finalResponse)
         pendingInput = null
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Chain execution completed successfully", "ENGINE")
@@ -605,30 +635,40 @@ class VoxynEngine(
 
     // ─── Recovery ─────────────────────────────────────────────────────
 
-    private suspend fun executeWithRecovery(plan: ExecutionPlan): ExecutionPlan? {
-        var lastError: String? = null
+    private suspend fun executeWithRecovery(plan: ExecutionPlan): ExecutionTrace? {
         val first = executeAttempt(plan)
         if (first is PhaseResult.Success) return first.value
-        if (first is PhaseResult.Failure) lastError = first.error
+        val firstFailure = first as? PhaseResult.Failure ?: return null
+        val retrySafe = plan.steps.size == 1 && plan.steps.all { step ->
+            executor.capabilityRegistry.find(step)?.retrySafe == true
+        }
+        if (!firstFailure.canFallback || !retrySafe) {
+            reportExecutionFailure(firstFailure.error)
+            return null
+        }
         VoxynLogger.w("Attempt 1 failed — retrying", "ENGINE")
         val second = executeAttempt(plan)
         if (second is PhaseResult.Success) return second.value
-        if (second is PhaseResult.Failure) lastError = second.error
+        val lastError = (second as? PhaseResult.Failure)?.error ?: firstFailure.error
         VoxynLogger.w("Both attempts failed", "ENGINE")
-        val reason = lastError?.takeIf { it.isNotBlank() } ?: "I couldn't complete that action."
-        tts.speak(reason)
-        emit(PipelineEvent.ClarificationRequired(listOf(lastError ?: "Execution failed")))
-        setOverlay("ERROR", "Failed")
+        reportExecutionFailure(lastError)
         return null
     }
 
-    private suspend fun executeAttempt(plan: ExecutionPlan): PhaseResult<ExecutionPlan> {
+    private fun reportExecutionFailure(error: String) {
+        val reason = error.takeIf { it.isNotBlank() } ?: "I couldn't complete that action."
+        tts.speak(reason)
+        emit(PipelineEvent.ClarificationRequired(listOf(reason)))
+        setOverlay("ERROR", "Failed")
+    }
+
+    private suspend fun executeAttempt(plan: ExecutionPlan): PhaseResult<ExecutionTrace> {
         emit(PipelineEvent.PhaseStarted(PipelinePhase.EXECUTE))
         return try {
             withTimeout(phaseTimeoutMs) { executePlan(plan) }.also { r ->
                 when (r) {
                     is PhaseResult.Success -> {
-                        emit(PipelineEvent.PhaseCompleted(PipelinePhase.EXECUTE, r.value.toString().take(80)))
+                        emit(PipelineEvent.PhaseCompleted(PipelinePhase.EXECUTE, "${r.value.steps.size} step(s) executed"))
                     }
                     is PhaseResult.Failure -> {
                         emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, r.error, r.canFallback))
@@ -749,12 +789,29 @@ class VoxynEngine(
         setOverlay("THINKING", "Thinking...")
         VoxynLogger.i("[AI] General query: \"$query\" (${route.type})", "AI")
         val result = runCatching {
-            withTimeout(60_000L) { generalQuery.resolve(query, conversationSession.getContext()) }
+            withTimeout(60_000L) {
+                generalQuery.resolve(
+                    query = query,
+                    conversationContext = conversationSession.getContext(),
+                    forceWeb = route.type == RouteType.WEB_REQUIRED || route.type == RouteType.CURRENT_INFORMATION
+                )
+            }
         }.getOrNull()
         if (result != null) {
-            completeConversational(route.type.name, result.text, result.params)
+            val params = result.params + buildMap {
+                result.sourceUrl?.let { put("source_url", it) }
+                put("source", result.source)
+                put("retrieved_at", result.retrievedAtEpochMs.toString())
+            }
+            if (result.route == com.voxyn.ai.IntelligenceRoute.WEB) {
+                emit(PipelineEvent.AnswerProvenance(result.source, result.sourceUrl, result.retrievedAtEpochMs))
+            }
+            completeConversational(route.type.name, result.text, params)
         } else {
-            completeConversational(route.type.name, localKnowledge.cantFind())
+            val fallback = if (route.type == RouteType.WEB_REQUIRED || route.type == RouteType.CURRENT_INFORMATION) {
+                "I couldn't verify that with a current web source just now."
+            } else localKnowledge.cantFind()
+            completeConversational(route.type.name, fallback)
         }
     }
 
@@ -821,31 +878,95 @@ class VoxynEngine(
 
     private fun decide(intent: IntentResult, confidence: Float, risk: Float): PhaseResult<DecisionState> =
         PhaseResult.Success(when {
+            intent.action in setOf("SET_ALARM", "SET_TIMER") && intent.params.containsKey("needs_clarification") ->
+                DecisionState.AwaitingClarification(listOf(intent.params["needs_clarification"] ?: "time"))
             confidence < 0.25f -> DecisionState.AwaitingClarification(listOf("Low confidence"))
             risk > 0.8f        -> DecisionState.AwaitingConfirmation(intent)
             else               -> DecisionState.Execute
         })
+
+    private suspend fun continueClockClarification(reply: String) {
+        val pending = pendingClockIntent ?: return
+        if (reply.trim().lowercase() in setOf("cancel", "stop", "never mind", "nevermind")) {
+            pendingClockIntent = null
+            tts.speak("Cancelled.")
+            emit(PipelineEvent.EngineInterrupted("Clock action cancelled"))
+            return
+        }
+        val clarification = pending.params["needs_clarification"] ?: "time"
+        val parsed = when (pending.action) {
+            "SET_ALARM" -> when (clarification) {
+                "AM or PM" -> {
+                    val period = reply.trim().lowercase().takeIf { it == "am" || it == "pm" }
+                    val hour = pending.params["hour"]?.toIntOrNull()
+                    val minute = pending.params["minutes"]?.toIntOrNull() ?: 0
+                    if (period == null || hour == null) null
+                    else intentRouter.alarmTimeParams("$hour:%02d $period".format(Locale.US, minute))
+                }
+                else -> intentRouter.alarmTimeParams(reply)
+            }
+            "SET_TIMER" -> if (clarification == "unit") {
+                val amount = pending.params["duration_amount"]
+                if (amount == null) intentRouter.timerDurationParams(reply)
+                else intentRouter.timerDurationParams("$amount $reply")
+            } else intentRouter.timerDurationParams(reply)
+            else -> null
+        }
+        if (parsed == null || parsed.containsKey("needs_clarification")) {
+            val updated = if (parsed != null) pending.copy(params = pending.params + parsed) else pending
+            pendingClockIntent = updated
+            val prompt = when {
+                updated.action == "SET_ALARM" && updated.params["needs_clarification"] == "AM or PM" -> "Is that AM or PM?"
+                updated.action == "SET_TIMER" && updated.params["needs_clarification"] == "unit" -> "Is that seconds, minutes, or hours?"
+                updated.action == "SET_TIMER" -> "How long should I set the timer for?"
+                else -> "What time should I set the alarm for?"
+            }
+            tts.speak(prompt)
+            emit(PipelineEvent.ClarificationRequired(listOf(prompt)))
+            return
+        }
+        pendingClockIntent = null
+        val resolved = pending.copy(params = (pending.params + parsed) - "needs_clarification" - "duration_amount")
+        continuePipeline(resolved, null, reply)
+    }
 
     private fun buildPlan(intent: IntentResult): PhaseResult<ExecutionPlan> =
         PhaseResult.Success(ExecutionPlan(listOf(
             ActionStep("step_0", intent.action, intent.action, intent.params)
         )))
 
-    private suspend fun executePlan(plan: ExecutionPlan): PhaseResult<ExecutionPlan> {
+    private suspend fun executePlan(plan: ExecutionPlan): PhaseResult<ExecutionTrace> {
         var cur = plan
+        val results = mutableListOf<ExecutedStep>()
         while (!cur.isComplete) {
             val step = cur.currentAction ?: break
             emit(PipelineEvent.ExecutionStepStarted(step))
             val result = executor.execute(step)
             if (result is PhaseResult.Failure) return result
-            emit(PipelineEvent.ExecutionStepCompleted(step, (result as PhaseResult.Success).value))
+            val value = (result as PhaseResult.Success).value
+            results += ExecutedStep(step, value)
+            emit(PipelineEvent.ExecutionStepCompleted(step, value))
             cur = cur.advance()
         }
-        return PhaseResult.Success(cur)
+        return PhaseResult.Success(ExecutionTrace(cur, results))
     }
 
-    private fun verify(plan: ExecutionPlan): PhaseResult<VerificationOutcome> =
-        PhaseResult.Success(if (plan.isComplete) VerificationOutcome.Success else VerificationOutcome.PartialSuccess)
+    private suspend fun verify(trace: ExecutionTrace): PhaseResult<VerificationOutcome> {
+        if (!trace.plan.isComplete || trace.steps.size != trace.plan.steps.size) {
+            return PhaseResult.Success(VerificationOutcome.PartialSuccess)
+        }
+        val outcomes = trace.steps.map { executed -> executor.verify(executed.step, executed.result) }
+        return PhaseResult.Success(combineVerification(outcomes))
+    }
+
+    private fun combineVerification(outcomes: List<VerificationOutcome>): VerificationOutcome = when {
+        outcomes.isEmpty() -> VerificationOutcome.Unverified
+        outcomes.any { it == VerificationOutcome.NeedsRollback } -> VerificationOutcome.NeedsRollback
+        outcomes.any { it == VerificationOutcome.Failure } -> VerificationOutcome.Failure
+        outcomes.any { it == VerificationOutcome.PartialSuccess } -> VerificationOutcome.PartialSuccess
+        outcomes.any { it == VerificationOutcome.Unverified } -> VerificationOutcome.Unverified
+        else -> VerificationOutcome.Success
+    }
 
     private suspend fun learn(intent: IntentResult, outcome: VerificationOutcome): PhaseResult<Float> {
         memory.recordOutcome(intent.action, outcome is VerificationOutcome.Success)
@@ -902,7 +1023,13 @@ class VoxynEngine(
     }
 
     private fun friendlySuccess(action: String, params: Map<String, String>, outcome: VerificationOutcome): String {
-        if (outcome !is VerificationOutcome.Success) return "Done, but something may not have worked, Sir."
+        when (outcome) {
+            VerificationOutcome.Unverified -> return "I requested that action, but couldn't verify the result, Sir."
+            VerificationOutcome.PartialSuccess -> return "That action may be partly complete, Sir."
+            VerificationOutcome.Failure -> return "That action did not pass verification, Sir."
+            VerificationOutcome.NeedsRollback -> return "That action needs to be undone. Please check the device, Sir."
+            VerificationOutcome.Success -> Unit
+        }
         val base = when (action) {
             "WIFI_ON"              -> "Opening WiFi settings"
             "WIFI_OFF"             -> "Opening WiFi settings"

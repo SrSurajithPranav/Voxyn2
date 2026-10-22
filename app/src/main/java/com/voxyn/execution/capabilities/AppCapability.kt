@@ -26,6 +26,7 @@ class AppCapability(
     override val requiredPermissions: Set<String> = emptySet()
 
     override val requiresNetwork: Boolean = false
+    override val retrySafe: Boolean = true
 
     override suspend fun execute(step: ActionStep): PhaseResult<String> {
         val appName = step.params["app_name"] ?: ""

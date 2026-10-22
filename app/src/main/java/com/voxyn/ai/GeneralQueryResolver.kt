@@ -12,7 +12,9 @@ data class GeneralQueryResult(
     val text: String,
     val source: String,
     val route: IntelligenceRoute,
-    val params: Map<String, String> = emptyMap()
+    val params: Map<String, String> = emptyMap(),
+    val sourceUrl: String? = null,
+    val retrievedAtEpochMs: Long = System.currentTimeMillis()
 )
 
 interface GeneralQueryResolver {
@@ -22,5 +24,9 @@ interface GeneralQueryResolver {
      * Returns null only when no provider could answer — callers then degrade
      * gracefully instead of fabricating.
      */
-    suspend fun resolve(query: String, conversationContext: String): GeneralQueryResult?
+    suspend fun resolve(
+        query: String,
+        conversationContext: String,
+        forceWeb: Boolean = false
+    ): GeneralQueryResult?
 }

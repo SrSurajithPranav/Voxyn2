@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 data class VoxynUiState(
     val logs: List<String> = emptyList(),
@@ -403,6 +406,12 @@ class VoxynViewModel(
             is PipelineEvent.ClarificationRequired   -> "❓ ${event.missing.firstOrNull()}"
             is PipelineEvent.ConfirmationRequired     -> "⚠️ Confirm: ${event.intent.action}"
             is PipelineEvent.TrustScoreUpdated        -> "📊 Trust[${event.action}]: ${event.score}"
+            is PipelineEvent.AnswerProvenance          -> {
+                val retrieved = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
+                    .withZone(ZoneId.systemDefault())
+                    .format(Instant.ofEpochMilli(event.retrievedAtEpochMs))
+                "Source: ${event.source} · retrieved $retrieved${event.url?.let { " · $it" }.orEmpty()}"
+            }
             is PipelineEvent.PipelineComplete         -> "🎯 Done"
         }
 

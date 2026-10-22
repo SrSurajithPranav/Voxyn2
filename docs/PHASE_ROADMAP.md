@@ -609,6 +609,15 @@ Documentation remains current.
 
 # Current Focus
 
+## Reliability hardening — October 2026
+
+1. Route current facts and explicit web searches through web providers before any LLM; show source and retrieval time.
+2. Connect capability verifiers to the engine and avoid claiming success for unverified handoffs.
+3. Retry only explicitly idempotent single-step actions.
+4. Clarify missing or ambiguous alarm and timer values instead of applying defaults.
+5. Keep continuous foreground voice listening as the active no-wake-phrase design and remove stale wake-word lifecycle paths.
+6. Re-run targeted unit tests and a debug build; verify microphone lifecycle and representative actions on the target device before marking the milestone complete.
+
 Recently completed:
 
 ✓ Communication & Messaging (contacts, SMS auto-send, WhatsApp compose, confirmation flow) — see CURRENT_STATE.md and DECISIONS.md (ADR-011/012)

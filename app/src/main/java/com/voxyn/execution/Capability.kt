@@ -18,6 +18,9 @@ interface Capability {
     val requiredPermissions: Set<String>
     val requiresNetwork: Boolean
 
+    /** True only when repeating execute after an uncertain failure cannot duplicate a side effect. */
+    val retrySafe: Boolean get() = false
+
     suspend fun execute(step: ActionStep): PhaseResult<String>
 
     suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome

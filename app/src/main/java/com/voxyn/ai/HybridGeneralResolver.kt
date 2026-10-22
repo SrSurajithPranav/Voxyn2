@@ -37,7 +37,11 @@ class HybridGeneralResolver(
     private val cloud: CloudIntelligenceProvider? = null
 ) : GeneralQueryResolver {
 
-    override suspend fun resolve(query: String, conversationContext: String): GeneralQueryResult? {
+    override suspend fun resolve(
+        query: String,
+        conversationContext: String,
+        forceWeb: Boolean
+    ): GeneralQueryResult? {
         val q = query.trim().lowercase().trimEnd('.', '!', '?')
         if (q.isBlank()) return null
 
@@ -63,6 +67,7 @@ class HybridGeneralResolver(
                 distanceParts(q)?.second ?: return null
             )
             isNewsQuery(q) -> newsAnswer(q)
+            forceWeb || isTimeSensitiveQuery(q) -> webAnswer(q)
             else -> generalAnswer(q, conversationContext)
         }
     }
@@ -172,13 +177,35 @@ class HybridGeneralResolver(
             result.text,
             result.source,
             IntelligenceRoute.WEB,
-            mapOf("kind" to "news", "query" to q)
+            mapOf("kind" to "news", "query" to q),
+            result.sourceUrl,
+            result.retrievedAtEpochMs
+        )
+    }
+
+    /** Current facts and explicit web searches must never be answered from model memory. */
+    private suspend fun webAnswer(query: String): GeneralQueryResult? {
+        val result = runCatching { duckDuckGo.search(query) }.getOrNull()
+            ?: runCatching { wikipedia.search(query) }.getOrNull()
+            ?: return null
+        return GeneralQueryResult(
+            text = result.text,
+            source = result.source,
+            route = IntelligenceRoute.WEB,
+            params = mapOf("kind" to "current_information", "query" to query),
+            sourceUrl = result.sourceUrl,
+            retrievedAtEpochMs = result.retrievedAtEpochMs
         )
     }
 
     // ─── General question: local → web → cloud → null ──────────────────
 
-    private suspend fun generalAnswer(q: String, conversationContext: String): GeneralQueryResult? {
+    private suspend fun generalAnswer(
+        q: String,
+        conversationContext: String,
+        forceWeb: Boolean = false
+    ): GeneralQueryResult? {
+        if (forceWeb || isTimeSensitiveQuery(q)) return webAnswer(q)
         if (q.contains("joke")) {
             return GeneralQueryResult(localKnowledge.joke(), "VOXYN", IntelligenceRoute.LOCAL, mapOf("kind" to "chat"))
         }
@@ -196,12 +223,12 @@ class HybridGeneralResolver(
 
         val wiki = runCatching { wikipedia.search(q) }.getOrNull()
         if (wiki != null) {
-            return GeneralQueryResult(wiki.text, wiki.source, IntelligenceRoute.WEB, mapOf("kind" to "chat"))
+            return GeneralQueryResult(wiki.text, wiki.source, IntelligenceRoute.WEB, mapOf("kind" to "chat"), wiki.sourceUrl, wiki.retrievedAtEpochMs)
         }
 
         val ddg = runCatching { duckDuckGo.search(q) }.getOrNull()
         if (ddg != null) {
-            return GeneralQueryResult(ddg.text, ddg.source, IntelligenceRoute.WEB, mapOf("kind" to "chat"))
+            return GeneralQueryResult(ddg.text, ddg.source, IntelligenceRoute.WEB, mapOf("kind" to "chat"), ddg.sourceUrl, ddg.retrievedAtEpochMs)
         }
 
         val cloudProvider = cloud
@@ -218,6 +245,12 @@ class HybridGeneralResolver(
         VoxynLogger.w("[ROUTER] No provider answered — graceful fallback", "ROUTER")
         return null
     }
+
+    private fun isTimeSensitiveQuery(query: String): Boolean =
+        Regex("\\b(right now|currently|as of (?:today|now)|current|latest|today)\\b", RegexOption.IGNORE_CASE)
+            .containsMatchIn(query) &&
+            !Regex("^(?:what(?:'s| is)? (?:the )?(?:date|day)|what day is it|what is today's date)\\b", RegexOption.IGNORE_CASE)
+                .containsMatchIn(query)
 
     // ─── Follow-up referents (extends ConversationSession) ─────────────
 

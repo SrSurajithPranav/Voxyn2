@@ -15,7 +15,7 @@ import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.voxyn.MainActivity
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
+import com.voxyn.voice.VoiceInputService
 import kotlin.math.abs
 
 enum class IslandState {
@@ -101,8 +101,8 @@ class DynamicIsland(
     private val longPressRunnable = Runnable {
         VoxynLogger.i("DynamicIsland long-pressed — pausing listening", "OVERLAY")
         try {
-            context.startService(Intent(context, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_STOP
+            context.startService(Intent(context, VoiceInputService::class.java).apply {
+                action = VoiceInputService.ACTION_STOP_LISTENING
             })
         } catch (_: Exception) {}
     }

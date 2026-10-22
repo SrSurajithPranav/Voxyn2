@@ -8,8 +8,8 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 
 /**
- * Loads the bundled offline Vosk model (assets/model-en-us) once and shares it
- * between the wake-word service and the command-listening service. The model is
+ * Loads the bundled offline Vosk model (assets/model-en-us) once for use as a
+ * command-recognition fallback. The model is
  * extracted manually because StorageService.sync fails on some devices with
  * "model-en-us/uuid".
  */

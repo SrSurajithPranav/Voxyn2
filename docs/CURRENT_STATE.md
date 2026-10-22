@@ -1,6 +1,6 @@
 # VOXYN Current State
 
-Version: 1.1
+Version: 1.2
 
 Status: Living Document
 
@@ -45,11 +45,11 @@ VOXYN
 
 Current Version
 
-Alpha (V1 Core Complete)
+Alpha (Reliability Hardening)
 
 Development Stage
 
-Hardened & Core Complete (~86% V1 Milestone)
+Feature-rich prototype; end-to-end reliability work remains active
 
 Target Device
 
@@ -61,11 +61,11 @@ Kotlin
 
 Minimum Android
 
-Android 10 (API 29)
+Android 8 (API 26)
 
 Target SDK
 
-Android 16 (API 36)
+Android 14 (API 34)
 
 Architecture Status
 
@@ -93,7 +93,7 @@ Build an always-on Android AI Operating System capable of:
 
 Current Progress
 
-~86% V1 Completion Milestone Achieved:
+Implemented capability breadth is substantial; the reliability milestone is not complete until end-to-end tests pass. Documentation claims of full verification and completion are superseded by the current findings below.
 - **Complete CapabilityRegistry Migration**: `ExecutionController` purely delegates all actions through DI-injected `Capability` singletons.
 - **9 Modular Capabilities**:
   1. `SystemCapability` (Wi-Fi, Bluetooth, Flashlight, Volume, Modes, Brightness, Airplane, Battery, Lock, Screenshot)
@@ -110,8 +110,8 @@ Current Progress
 - **Confidence-Scored App Resolution**: `AppCatalog` and `AppLaunchResolver` enforce confidence thresholds (`MIN_MATCH_CONFIDENCE = 60`, `MIN_SUGGESTION_CONFIDENCE = 50`) and present disambiguation prompts (*"Did you mean X?"*) instead of blindly opening incorrect applications.
 - **Multi-Turn Referents & OSRM Distance Comparisons**: `ConversationSession` and `HybridGeneralResolver` maintain referents across conversational turns and calculate multi-city / comparative distance queries.
 - **Persistent Explicit Memory**: `MemoryRepository` supports saving, keyword recall, and forgetting explicit notes isolated from user preferences and action trust scores.
-- **Real Post-Condition Verification**: Checks actual system state post-execution (Wi-Fi, Bluetooth, Torch, Stream Volume, Ringer Mode, Screenshot file creation) and reports `SUCCESS`, `FAILURE`, `PARTIAL`, or `UNVERIFIED`.
-- **Automated Test & Build Validation**: 100% unit tests passing across all suites including the 12 core scenario end-to-end verification tests. `assembleDebug` builds cleanly.
+- **Capability-level verifiers** exist; engine integration and individual action coverage are still being hardened.
+- **Test/build status**: reliability changes are in progress; do not treat prior completion claims as current validation.
 
 ---
 
@@ -177,7 +177,7 @@ LEARN
 
 Current implementation consists of:
 
-Voice Input (Vosk Wake Word + Parakeet STT / Vosk STT Fallback)
+Voice Input (continuous foreground listening; Parakeet STT / Vosk command STT fallback; no wake phrase)
 
 ↓
 
@@ -224,7 +224,7 @@ Architecture remains aligned with
 
 Current modules include:
 
-- Voice (`WakeWordService`, `VoiceInputService`, `TextToSpeechManager`, `SpeechNormalizer`, `ParakeetRecognizer`, `VoskRecognizer`)
+- Voice (`VoiceInputService`, `TextToSpeechManager`, `SpeechNormalizer`, `SherpaParakeetRecognizer`, `VoskCommandRecognizer`)
 - Accessibility (`VoxynAccessibilityService`, `AccessibilityCapability`)
 - Communication (`ContactResolver`, `MessageComposer`, `CommunicationCapability`)
 - Execution (`ExecutionController`, `CapabilityRegistry`, 9 modular capabilities)
@@ -241,12 +241,12 @@ Current modules include:
 
 # Completed Features
 
-✓ Offline Wake word service (Vosk)
+✓ Continuous voice-listening foreground service (no wake phrase; Android microphone permission and notification required)
 ✓ Speech recognition (Parakeet INT8 local + Vosk fallback)
 ✓ Utterance-tracked Text-to-Speech (TTS)
 ✓ Speech normalizer with rhotacism & phonetic alias engine
 ✓ CapabilityRegistry migration with 9 isolated capabilities
-✓ Real post-condition verification engine
+◐ Capability-level post-condition verifiers (engine integration is under reliability hardening)
 ✓ Natural multi-turn conversation session
 ✓ World time & OSM driving / geocoded distance routing
 ✓ Contact lookup & phone dialer
@@ -254,7 +254,7 @@ Current modules include:
 ✓ Camera intent hand-off with CAMERA runtime-permission checks
 ✓ Explicit persistent memory repository
 ✓ Dynamic Island overlay HUD
-✓ Clean debug APK build & 100% unit test pass rate
+◐ Unit tests cover routing and capabilities; the current reliability changes require a fresh test/build run
 
 ---
 
@@ -273,14 +273,28 @@ Current implementation does not yet support:
 # Stabilization Update — August 2026
 
 - Command recognizers now release `AudioRecord`, VAD, Vosk recognizers, and streams on normal completion, cancellation, and error paths.
-- Voice input explicitly relinquishes a command recognizer before processing a result or retrying, preventing microphone ownership overlap with wake-word detection.
+- Voice input explicitly relinquishes a command recognizer before processing a result, then re-arms the continuous listener.
 - TTS uses a monotonic utterance ID and ignores stale platform callbacks; replacing or stopping speech completes outstanding callbacks so waiting callers cannot hang.
 - The conversation session is bounded to the most recent eight turns; long exchanges cannot retain an unbounded in-memory transcript.
 - HUD execution now transitions through `THINKING`, `EXECUTING`, and `SPEAKING` rather than showing execution as speech.
 - App matching rejects close fuzzy ties rather than arbitrarily selecting an installed app.
-- `VoxynEngine`'s invalid `plan.actions` reference was corrected to its existing `ExecutionPlan` verification API.
+- `VoxynEngine`'s invalid `plan.actions` reference was corrected to its existing `ExecutionPlan` API.
 
-**Verification pending:** the final clean test/build run is in progress. ADB is not installed or on `PATH` in this workspace, so install/device/logcat checks cannot be performed here.
+**Verification note:** this historical update does not establish the current branch's build or device status. The current changes need their own test/build and on-device confirmation.
+
+---
+
+# Reliability Hardening — October 2026
+
+- Current-fact questions and explicit web searches are routed to web providers before any language model. If no web source answers, VOXYN reports that it could not verify the current fact.
+- Web answers carry a source URL and retrieval time in the pipeline UI log.
+- The engine now consumes capability verification results; unverified outcomes no longer increase the action trust score.
+- Automatic retries are limited to a single-step action whose capability explicitly declares retry safety and whose failure allows fallback.
+- Alarm and timer requests require an explicit time or duration. Ambiguous hours and timer units trigger a follow-up instead of silently defaulting to 7 AM or five minutes.
+- The wake-word service has been removed from the app lifecycle. The foreground voice service continuously re-arms command recognition; users can pause listening from the HUD.
+- Internet access is used for current information. Cloud LLM reasoning remains optional and is only configured with an explicit API key; local commands and deterministic answers continue to work offline.
+
+**Current verification status:** pending targeted unit tests and debug build after this update. No device-level validation has been run.
 
 ---
 

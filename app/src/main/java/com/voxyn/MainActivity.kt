@@ -24,7 +24,6 @@ import com.voxyn.ui.theme.VoxynTheme
 import com.voxyn.ui.VoxynViewModel
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.VoiceInputService
-import com.voxyn.wake.WakeWordService
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class MainActivity : ComponentActivity() {

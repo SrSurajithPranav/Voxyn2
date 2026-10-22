@@ -438,6 +438,10 @@ class IntentRouter {
 
                 if (intent.action in COMMUNICATION_ACTIONS) {
                     params.putAll(communicationParams(intent.action, match, patternIndex))
+                } else if (intent.action == "SET_ALARM") {
+                    params.putAll(alarmTimeParams(trimmed) ?: mapOf("needs_clarification" to "time"))
+                } else if (intent.action == "SET_TIMER") {
+                    params.putAll(timerDurationParams(trimmed) ?: mapOf("needs_clarification" to "duration"))
                 } else {
                     for ((paramName, groupIndex) in intent.paramExtractors) {
                         runCatching {
@@ -479,6 +483,47 @@ class IntentRouter {
 
         VoxynLogger.w("No intent matched: '$trimmed'", "INTENT")
         return IntentResult(action = "UNKNOWN", rawInput = trimmed, confidence = 0.1f)
+    }
+
+    /** Parses a clock time from an alarm request or a short clarification reply. */
+    fun alarmTimeParams(input: String): Map<String, String>? {
+        val match = Regex(
+            "^(?:.*?\\b(?:at|for)\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)?(?=\\s|$)",
+            RegexOption.IGNORE_CASE
+        ).find(input.trim()) ?: return null
+        val rawHour = match.groupValues[1].toIntOrNull() ?: return null
+        val minutes = match.groupValues[2].ifBlank { "0" }.toIntOrNull() ?: return null
+        val meridiem = match.groupValues[3].replace(".", "").lowercase()
+        if (minutes !in 0..59 || rawHour !in 0..23) return null
+        if (meridiem.isNotBlank() && rawHour !in 1..12) return null
+        if (meridiem.isBlank() && rawHour in 1..12) {
+            return mapOf(
+                "hour" to rawHour.toString(),
+                "minutes" to minutes.toString(),
+                "needs_clarification" to "AM or PM"
+            )
+        }
+        val hour = when (meridiem) {
+            "am" -> rawHour % 12
+            "pm" -> (rawHour % 12) + 12
+            else -> rawHour
+        }
+        return mapOf("hour" to hour.toString(), "minutes" to minutes.toString())
+    }
+
+    /** Parses explicit timer durations and marks bare numbers for clarification. */
+    fun timerDurationParams(input: String): Map<String, String>? {
+        val match = Regex("(\\d+)\\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?\\b", RegexOption.IGNORE_CASE)
+            .find(input.trim()) ?: return null
+        val amount = match.groupValues[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val unit = match.groupValues[2].lowercase()
+        if (unit.isBlank()) return mapOf("duration_amount" to amount.toString(), "needs_clarification" to "unit")
+        val multiplier = when {
+            unit.startsWith("h") -> 3600
+            unit.startsWith("m") -> 60
+            else -> 1
+        }
+        return mapOf("length_seconds" to (amount * multiplier).toString())
     }
 
     @Suppress("UNUSED_PARAMETER")

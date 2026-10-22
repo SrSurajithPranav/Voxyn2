@@ -53,12 +53,19 @@ class ClockCapability(
     }
 
     override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
-        return VerificationOutcome.Success
+        // ACTION_SET_ALARM/TIMER and related intents are delegated to the
+        // user's clock app. Android provides no portable read-back API here.
+        return VerificationOutcome.Unverified
     }
 
     private fun setAlarm(params: Map<String, String>): PhaseResult<String> {
-        val hour = params["hour"]?.toIntOrNull() ?: 7
-        val minutes = params["minutes"]?.toIntOrNull() ?: 0
+        val hour = params["hour"]?.toIntOrNull()
+            ?: return PhaseResult.Failure("Alarm time is missing", canFallback = false)
+        val minutes = params["minutes"]?.toIntOrNull()
+            ?: return PhaseResult.Failure("Alarm minutes are missing", canFallback = false)
+        if (hour !in 0..23 || minutes !in 0..59) {
+            return PhaseResult.Failure("Alarm time is invalid", canFallback = false)
+        }
         val message = params["message"] ?: "VOXYN Alarm"
 
         val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
@@ -72,7 +79,7 @@ class ClockCapability(
         return if (intent.resolveActivity(context.packageManager) != null) {
             context.startActivity(intent)
             val timeStr = String.format("%d:%02d", hour, minutes)
-            PhaseResult.Success("Alarm set for $timeStr")
+            PhaseResult.Success("Alarm request sent to the clock app for $timeStr")
         } else {
             PhaseResult.Failure("No clock app available to set alarm")
         }
@@ -119,8 +126,8 @@ class ClockCapability(
 
     private fun setTimer(params: Map<String, String>): PhaseResult<String> {
         val seconds = params["length_seconds"]?.toIntOrNull()
-            ?: (params["minutes"]?.toIntOrNull()?.times(60))
-            ?: 300
+            ?: return PhaseResult.Failure("Timer duration is missing", canFallback = false)
+        if (seconds <= 0) return PhaseResult.Failure("Timer duration is invalid", canFallback = false)
         val message = params["message"] ?: "VOXYN Timer"
 
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
@@ -135,7 +142,7 @@ class ClockCapability(
             val min = seconds / 60
             val sec = seconds % 60
             val durationStr = if (min > 0) "$min minute${if (min > 1) "s" else ""}" else "$sec seconds"
-            PhaseResult.Success("Timer set for $durationStr")
+            PhaseResult.Success("Timer request sent to the clock app for $durationStr")
         } else {
             PhaseResult.Failure("No clock app available to set timer")
         }

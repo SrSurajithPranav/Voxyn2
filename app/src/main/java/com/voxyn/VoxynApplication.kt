@@ -12,7 +12,6 @@ import com.voxyn.di.appModule
 import com.voxyn.utils.VoxynLogger
 import com.voxyn.voice.ParakeetModelManager
 import com.voxyn.voice.VoiceInputService
-import com.voxyn.wake.WakeWordService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,7 +36,7 @@ class VoxynApplication : Application() {
 
         logDiagnostics()
         VoxynLogger.i("VOXYN starting — launching background services", "APP")
-        startWakeService()
+        startVoiceService()
         restoreModelsInBackground()
     }
 
@@ -63,7 +62,7 @@ class VoxynApplication : Application() {
             )
             if (asrOk) {
                 // Pre-load the ~650 MB recognizer in the background so the first
-                // "Hey VOXYN" command is captured from the very first word.
+                // Spoken commands are available as soon as the continuous listener starts.
                 val t0 = System.currentTimeMillis()
                 val rec = runCatching { parakeetManager.getRecognizer() }.getOrNull()
                 VoxynLogger.i(
@@ -109,13 +108,13 @@ class VoxynApplication : Application() {
         }
     }
 
-    private fun startWakeService() {
+    private fun startVoiceService() {
         // Never start the always-on listener without the mic — otherwise it shows
         // a "listening" notification while hearing nothing.
         val micOk = (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED)
         if (!micOk) {
-            VoxynLogger.w("Microphone permission not granted — wake word service NOT started", "APP")
+            VoxynLogger.w("Microphone permission not granted — always-listening voice service NOT started", "APP")
             return
         }
         try {
@@ -124,7 +123,7 @@ class VoxynApplication : Application() {
                     action = VoiceInputService.ACTION_START_LISTENING
                 }
             )
-            VoxynLogger.i("VoiceInputService started from Application (Always-Listening Mode)", "APP")
+            VoxynLogger.i("VoiceInputService started from Application (continuous listening)", "APP")
         } catch (e: Exception) {
             // On Android 14+ (SDK 34+) calling startForegroundService from Application.onCreate
             // throws ForegroundServiceStartNotAllowedException when the app is not yet in the

@@ -65,7 +65,11 @@ class CommunicationCapability(
     }
 
     override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
-        return VerificationOutcome.Success
+        return when {
+            step.actionType == "CONTACT_LOOKUP" && executionResult.contains("'s number is") -> VerificationOutcome.Success
+            // Activity launch or SMS dispatch acceptance does not prove delivery or call connection.
+            else -> VerificationOutcome.Unverified
+        }
     }
 
     private suspend fun callContact(params: Map<String, String>): PhaseResult<String> {

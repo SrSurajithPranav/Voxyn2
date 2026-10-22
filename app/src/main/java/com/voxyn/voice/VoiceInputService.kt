@@ -17,7 +17,6 @@ import android.os.Looper
 import com.voxyn.MainActivity
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,10 +31,8 @@ import org.koin.android.ext.android.inject
  * SpeechRecognizerEngine (sherpa-onnx/Parakeet, with Vosk as a fallback) and
  * runs the engine.
  *
- * After a command the conversation stays open for [ConversationSession.windowMs]:
- * the service re-arms listening for follow-up commands without the wake phrase.
- * When the window expires it says "Standing by." and asks WakeWordService to
- * resume wake-word detection.
+ * The service re-arms listening after every command and silence interval. There
+ * is no wake phrase; the foreground service owns the continuous listening loop.
  *
  * TTS never speaks while the microphone is open: audio focus is released before
  * the engine speaks and re-acquired before listening again.
@@ -70,7 +67,6 @@ class VoiceInputService : Service() {
     private var activeEngine      : SpeechRecognizerEngine? = null
     private var audioManager      : AudioManager? = null
     private var audioFocusRequest : AudioFocusRequest? = null
-    private var conversationWatchdog: Runnable? = null
     private var consecutiveFailures = 0
     private var currentSessionId  : String = ""
     private var wakeLock          : android.os.PowerManager.WakeLock? = null
@@ -121,7 +117,6 @@ class VoiceInputService : Service() {
 
     override fun onDestroy() {
         stopping = true
-        cancelWatchdog()
         stopListeningInternal()
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -266,7 +261,6 @@ class VoiceInputService : Service() {
         activeEngine?.stop()
         activeEngine = null
         releaseAudioFocus()
-        cancelWatchdog()
         consecutiveFailures = 0
         updateNotification("Processing: \"$text\"...")
 
@@ -304,24 +298,11 @@ class VoiceInputService : Service() {
 
     private fun stopListeningInternal() {
         isListening = false
-        cancelWatchdog()
         activeEngine?.stop()
         activeEngine = null
         releaseAudioFocus()
         coordinator.onSessionEnded()
         currentSessionId = ""
-    }
-
-    private fun cancelWatchdog() {
-        conversationWatchdog?.let { mainHandler.removeCallbacks(it) }
-        conversationWatchdog = null
-    }
-
-    private fun resumeWakeAndStop() {
-        if (stopping) return
-        stopping = true
-        stopListeningInternal()
-        stopSelf()
     }
 
     // ─── Audio focus ──────────────────────────────────────────────────

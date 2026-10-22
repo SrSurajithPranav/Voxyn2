@@ -113,6 +113,20 @@ class RequestRouter {
             return RouteDecision(RouteType.WEB_REQUIRED, mapOf("query" to query), 0.9f)
         }
 
+        // Time-sensitive facts must not fall through to the local model's
+        // training data. Pure device date/time questions remain deterministic.
+        val dynamicOfficeOrEvent = Regex("\\b(president|prime minister|ceo|founder|election|news|price|weather)\\b")
+            .containsMatchIn(t)
+        val asksCurrentFact = (Regex("\\b(right now|currently|as of (?:today|now)|current|latest|today)\\b")
+            .containsMatchIn(t) || dynamicOfficeOrEvent) &&
+            (Regex("^(?:what|who|when|where|which|is|are|tell me|explain|search)\\b").containsMatchIn(t) ||
+                dynamicOfficeOrEvent) &&
+            !Regex("^(?:what(?:'s| is)? (?:the )?(?:current )?(?:date|day)|what day is it|what(?:'s| is)? the time|what time is it|current time|what(?:'s| is)? today'?s date|today's date)\\b")
+                .containsMatchIn(t)
+        if (asksCurrentFact) {
+            return RouteDecision(RouteType.CURRENT_INFORMATION, mapOf("query" to perceived.trim()), 0.92f)
+        }
+
         // ── Smalltalk must stay on the fast path (SMALLTALK/GREETING/TIME/DATE) ──
         if (Regex("your name|how are you|are you|who are you|good job|great|what's up|whats up|what's that|what is that|the time|time is it|current time|the date|today|day is it").containsMatchIn(t)) {
             return RouteDecision(RouteType.FAST_COMMAND, emptyMap(), 0.8f)

@@ -60,6 +60,6 @@ class NavigationCapability(
     }
 
     override suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome {
-        return VerificationOutcome.Success
+        return VerificationOutcome.Unverified
     }
 }

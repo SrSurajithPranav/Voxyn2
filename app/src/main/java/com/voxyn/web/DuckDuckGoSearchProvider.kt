@@ -40,7 +40,12 @@ open class DuckDuckGoSearchProvider : WebSearchProvider {
                 else -> return@withContext null
             }
             VoxynLogger.i("[WEB] DuckDuckGo answered (${text.length} chars)", "WEB")
-            WebSearchResult(text, "DuckDuckGo")
+            WebSearchResult(
+                text = text,
+                source = "DuckDuckGo",
+                sourceUrl = json.optString("AbstractURL").takeIf { it.isNotBlank() }
+                    ?: json.optString("Redirect").takeIf { it.startsWith("http") }
+            )
         }.getOrNull()
     }
 }

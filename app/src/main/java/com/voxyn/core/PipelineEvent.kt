@@ -12,5 +12,6 @@ sealed class PipelineEvent {
     data class ClarificationRequired(val missing: List<String>) : PipelineEvent()
     data class ConfirmationRequired(val intent: IntentResult) : PipelineEvent()
     data class TrustScoreUpdated(val action: String, val score: Float) : PipelineEvent()
+    data class AnswerProvenance(val source: String, val url: String?, val retrievedAtEpochMs: Long) : PipelineEvent()
     object PipelineComplete : PipelineEvent()
 }

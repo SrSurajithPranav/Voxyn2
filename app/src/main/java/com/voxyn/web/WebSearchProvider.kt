@@ -8,7 +8,9 @@ package com.voxyn.web
  */
 data class WebSearchResult(
     val text: String,
-    val source: String
+    val source: String,
+    val sourceUrl: String? = null,
+    val retrievedAtEpochMs: Long = System.currentTimeMillis()
 )
 
 interface WebSearchProvider {

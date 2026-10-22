@@ -42,6 +42,23 @@ private class FakeNewsProvider : NewsSearchProvider() {
         WebSearchResult("Headline one. Headline two.", "Fake News")
 }
 
+private class FakeLocalAi : AiProvider {
+    override val name: String = "Fake local model"
+    var calls = 0
+    override suspend fun answer(question: String, conversationContext: String): AiResponse? {
+        calls++
+        return AiResponse("A stale model answer.", name)
+    }
+}
+
+private class FakeDuckDuckGoProvider : DuckDuckGoSearchProvider() {
+    var calls = 0
+    override suspend fun search(query: String): WebSearchResult? {
+        calls++
+        return WebSearchResult("Current source-backed answer.", "Fake Web", "https://example.test/current")
+    }
+}
+
 class HybridGeneralResolverTest {
 
     private fun resolver(
@@ -169,5 +186,50 @@ class HybridGeneralResolverTest {
         val (r, _, _) = resolver()
         val result = r.resolve("tell me a joke", "")
         assertNotNull(result)
+    }
+
+    @Test
+    fun `current facts use web before the local model and retain provenance`() = runBlocking {
+        val local = FakeLocalAi()
+        val web = FakeDuckDuckGoProvider()
+        val resolver = HybridGeneralResolver(
+            localLlm = local,
+            localKnowledge = LocalKnowledgeProvider(),
+            worldTime = WorldTimeProvider(),
+            wikipedia = WikipediaSearchProvider(),
+            news = NewsSearchProvider(),
+            duckDuckGo = web,
+            weather = FakeWeatherProvider(),
+            distance = FakeDistanceProvider(),
+            session = ConversationSession()
+        )
+
+        val result = resolver.resolve("who is the president right now", "")
+        assertEquals(0, local.calls)
+        assertEquals(1, web.calls)
+        assertEquals("Fake Web", result?.source)
+        assertEquals("https://example.test/current", result?.sourceUrl)
+        assertEquals(IntelligenceRoute.WEB, result?.route)
+    }
+
+    @Test
+    fun `explicit web requests do not fall back to the local model`() = runBlocking {
+        val local = FakeLocalAi()
+        val web = FakeDuckDuckGoProvider()
+        val resolver = HybridGeneralResolver(
+            localLlm = local,
+            localKnowledge = LocalKnowledgeProvider(),
+            worldTime = WorldTimeProvider(),
+            wikipedia = WikipediaSearchProvider(),
+            news = NewsSearchProvider(),
+            duckDuckGo = web,
+            weather = FakeWeatherProvider(),
+            distance = FakeDistanceProvider(),
+            session = ConversationSession()
+        )
+
+        resolver.resolve("best cafes in Chennai", "", forceWeb = true)
+        assertEquals(0, local.calls)
+        assertEquals(1, web.calls)
     }
 }

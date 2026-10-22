@@ -107,6 +107,20 @@ class RequestRouterTest {
     }
 
     @Test
+    fun `time-sensitive facts route to current information instead of model memory`() {
+        val result = router.route("Who is the president of the US right now?")
+        assertEquals(RouteType.CURRENT_INFORMATION, result.type)
+        assertTrue(result.params["query"].orEmpty().contains("right now"))
+        assertEquals(RouteType.CURRENT_INFORMATION, router.route("Who is India's prime minister currently?").type)
+    }
+
+    @Test
+    fun `local date and clock questions remain deterministic`() {
+        assertEquals(RouteType.FAST_COMMAND, router.route("what is today's date").type)
+        assertEquals(RouteType.FAST_COMMAND, router.route("what time is it right now").type)
+    }
+
+    @Test
     fun `memory routes stay intact`() {
         assertEquals(RouteType.MEMORY_SAVE, router.route("remember that my meeting is friday").type)
         assertEquals(RouteType.MEMORY_SAVE, router.route("remember that Rahul's birthday is Friday").type)

@@ -9,7 +9,6 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
-import com.voxyn.wake.WakeWordService
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

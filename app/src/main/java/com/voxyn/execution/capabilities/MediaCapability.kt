@@ -73,7 +73,7 @@ class MediaCapability(
                     if (!audioManager.isMusicActive) VerificationOutcome.Success
                     else VerificationOutcome.PartialSuccess
                 }
-                "NEXT_TRACK", "PREV_TRACK" -> VerificationOutcome.Success
+                "NEXT_TRACK", "PREV_TRACK" -> VerificationOutcome.Unverified
                 else -> VerificationOutcome.Unverified
             }
         }.getOrDefault(VerificationOutcome.Unverified)
