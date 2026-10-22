@@ -3,68 +3,75 @@ package com.voxyn.execution
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import com.voxyn.apps.AppCatalog
 import com.voxyn.core.PhaseResult
+import com.voxyn.utils.VoxynLogger
 
-/** Resolves a user-facing app name against launchable applications on this device. */
-class AppLaunchResolver(private val context: Context) {
+/** Resolves a user-facing app name against the apps actually installed on this device. */
+class AppLaunchResolver(
+    private val context: Context,
+    private val catalog: AppCatalog
+) {
 
     fun launch(appName: String): PhaseResult<String> {
-        val query = normalize(appName)
-        if (query.isBlank()) return PhaseResult.Failure("App name is missing")
+        if (appName.isBlank()) return PhaseResult.Failure("App name is missing")
 
-        val packageManager = context.packageManager
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
-            .map { info ->
-                AppCandidate(
-                    label = info.loadLabel(packageManager).toString(),
-                    packageName = info.activityInfo.packageName
-                )
-            }
+        val entry = catalog.findBest(appName)
+        val displayName = entry?.label ?: appName.trim()
 
-        val candidate = matches
-            .map { it to score(query, it) }
-            .filter { (_, score) -> score > 0 }
-            .maxByOrNull { (_, score) -> score }
-            ?.first
-            ?: knownPackage(appName)?.let { packageName ->
-                packageManager.getLaunchIntentForPackage(packageName)?.let {
-                    AppCandidate(appName, packageName)
+        val packageName = entry?.packageName
+            ?: knownPackage(catalog.canonical(appName))
+            ?: run {
+                val suggestions = catalog.suggest(appName, 3)
+                val message = if (suggestions.isEmpty()) {
+                    "I couldn't find an installed app named $displayName."
+                } else {
+                    "I couldn't find $displayName. Did you mean ${suggestions.joinToString(" or ")}?"
                 }
+                return PhaseResult.Failure(message)
             }
-            ?: return PhaseResult.Failure("I couldn't find an installed app named $appName")
 
-        val launchIntent = packageManager.getLaunchIntentForPackage(candidate.packageName)
-            ?: return PhaseResult.Failure("${candidate.label} cannot be launched")
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+            ?: return PhaseResult.Failure("I couldn't find an installed app named $displayName.")
 
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
-        return PhaseResult.Success("Opened ${candidate.label}")
+        VoxynLogger.i("Opened app: $displayName ($packageName)", "EXEC")
+        return PhaseResult.Success("Opened $displayName")
     }
 
-    private fun score(query: String, candidate: AppCandidate): Int {
-        val label = normalize(candidate.label)
-        val packageName = normalize(candidate.packageName.substringAfterLast('.'))
-        return when {
-            label == query -> 100
-            label.startsWith(query) -> 80
-            label.contains(query) -> 60
-            packageName == query -> 50
-            else -> 0
-        }
+    fun resolvePackage(appName: String): String? {
+        if (appName.isBlank()) return null
+        val entry = catalog.findBest(appName)
+        return entry?.packageName ?: knownPackage(catalog.canonical(appName))
     }
 
-    private fun normalize(value: String): String =
-        value.lowercase().replace(Regex("[^a-z0-9]"), "")
-
-    private fun knownPackage(appName: String): String? = when (normalize(appName)) {
+    private fun knownPackage(canonicalName: String): String? = when (canonicalName) {
         "youtube" -> "com.google.android.youtube"
         "whatsapp" -> "com.whatsapp"
         "whatsappbusiness" -> "com.whatsapp.w4b"
+        "chatgpt" -> "com.openai.chatgpt"
         "settings" -> "com.android.settings"
         "chrome" -> "com.android.chrome"
+        "google" -> "com.google.android.googlequicksearchbox"
+        "instagram" -> "com.instagram.android"
+        "telegram" -> "org.telegram.messenger"
+        "snapchat" -> "com.snapchat.android"
+        "gmail" -> "com.google.android.gm"
+        "maps" -> "com.google.android.apps.maps"
+        "photos" -> "com.google.android.apps.photos"
+        "playstore" -> "com.android.vending"
+        "youtubemusic" -> "com.google.android.apps.youtube.music"
+        "clock" -> "com.google.android.deskclock"
+        "calculator" -> "com.google.android.calculator"
+        "phone" -> "com.google.android.dialer"
+        "messages" -> "com.google.android.apps.messaging"
+        "spotify" -> "com.spotify.music"
+        "netflix" -> "com.netflix.mediaclient"
+        "primevideo" -> "com.amazon.avod.thirdpartyclient"
+        "x" -> "com.twitter.android"
+        "facebook" -> "com.facebook.katana"
+        "linkedin" -> "com.linkedin.android"
         else -> null
     }
-
-    private data class AppCandidate(val label: String, val packageName: String)
 }

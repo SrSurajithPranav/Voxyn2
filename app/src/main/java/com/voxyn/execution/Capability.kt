@@ -5,45 +5,28 @@ import com.voxyn.core.PhaseResult
 import com.voxyn.core.VerificationOutcome
 
 /**
- * An isolated Android action that can be selected by the execution layer.
+ * An independently testable Android action provider.
  *
- * Capabilities declare their requirements but never request permissions,
- * determine intent, plan work, or update UI.
+ * Capabilities declare their prerequisites but never request permissions or
+ * interact with UI. The engine continues to own intent, planning, risk
+ * decisions, and user confirmation.
  */
 interface Capability {
-    val metadata: CapabilityMetadata
+    val id: String
+    val supportedActions: Set<String>
+    val riskLevel: CapabilityRisk
+    val requiredPermissions: Set<String>
+    val requiresNetwork: Boolean
 
-    fun supports(action: ActionStep): Boolean =
-        action.actionType in metadata.supportedActions
+    /** True only when repeating execute after an uncertain failure cannot duplicate a side effect. */
+    val retrySafe: Boolean get() = false
 
-    suspend fun execute(action: ActionStep): PhaseResult<String>
+    suspend fun execute(step: ActionStep): PhaseResult<String>
 
-    suspend fun verify(action: ActionStep): VerificationOutcome
-
-    suspend fun rollback(action: ActionStep): PhaseResult<String>? = null
+    suspend fun verify(step: ActionStep, executionResult: String): VerificationOutcome
 }
 
-data class CapabilityMetadata(
-    val id: String,
-    val displayName: String,
-    val supportedActions: Set<String>,
-    val requiredPermissions: Set<String> = emptySet(),
-    val riskLevel: CapabilityRiskLevel,
-    val availability: CapabilityAvailability,
-    val estimatedLatencyMs: Long,
-    val supportsVerification: Boolean,
-    val supportsRollback: Boolean = false
-)
-
-enum class CapabilityRiskLevel {
-    NONE,
+enum class CapabilityRisk {
     LOW,
-    MEDIUM,
-    HIGH,
-    CRITICAL
-}
-
-enum class CapabilityAvailability {
-    OFFLINE,
-    ONLINE_REQUIRED
+    HIGH
 }

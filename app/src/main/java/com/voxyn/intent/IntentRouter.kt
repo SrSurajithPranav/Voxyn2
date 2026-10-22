@@ -66,6 +66,89 @@ class IntentRouter {
             Regex("clip\\s*this", RegexOption.IGNORE_CASE)
         )),
 
+        // ─── Voice Access & UI Operating Layer ────────────────────────
+        IntentDef("CLICK_ELEMENT", 0.94f, listOf(
+            Regex("^(?:click|tap|press)\\s+(?:on\\s+)?(?:the\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:click|tap|press)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("target" to 1)),
+
+        IntentDef("INPUT_TEXT", 0.94f, listOf(
+            Regex("^(?:type|enter|write|input)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("text" to 1)),
+
+        IntentDef("RECENTS", 0.95f, listOf(
+            Regex("^(?:open\\s+)?recents?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+|show\\s+)?recent\\s+apps?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+)?app\\s+switcher$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("QUICK_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open\\s+|show\\s+)?quick\\s+settings?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open\\s+|show\\s+)?control\\s+center$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SPLIT_SCREEN", 0.95f, listOf(
+            Regex("^(?:open\\s+|start\\s+|toggle\\s+)?split\\s+screen$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("HOTSPOT_ON", 0.95f, listOf(
+            Regex("^(?:turn\\s+on|enable|start)\\s+(?:the\\s+)?(?:personal\\s+)?hotspot$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("HOTSPOT_OFF", 0.95f, listOf(
+            Regex("^(?:turn\\s+off|disable|stop)\\s+(?:the\\s+)?(?:personal\\s+)?hotspot$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("READ_SCREEN", 0.94f, listOf(
+            Regex("^(?:what(?:'s|\\s+is)\\s+on\\s+(?:my\\s+)?screen|read\\s+(?:the\\s+|my\\s+)?screen|summarize\\s+(?:the\\s+|my\\s+)?screen)$", RegexOption.IGNORE_CASE)
+        )),
+
+        // ─── Communication & Messaging ────────────────────────────────
+        // MESSAGE_GROUP out-ranks SEND_MESSAGE so "message the family group
+        // saying …" is never parsed as a recipient. SEND_WHATSAPP_MESSAGE and
+        // SEND_UNSUPPORTED_CHANNEL out-rank SEND_MESSAGE so the channel is
+        // resolved first. SEND_CURRENT_MESSAGE above stays untouched.
+        IntentDef("MESSAGE_GROUP", 0.95f, listOf(
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:on\\s+whatsapp\\s+)?(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(?:the\\s+)?(.+?\\s+group)\\s+(?:on\\s+whatsapp\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:the\\s+)?(.+?\\s+group)\\s+(?:a\\s+)?(?:whatsapp(?:\\s+message)?\\s+)?(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:the\\s+)?(.+?\\s+group)\\s+(?:a\\s+)?(?:whatsapp(?:\\s+message)?\\s+)(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_WHATSAPP_MESSAGE", 0.94f, listOf(
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(.+?)\\s+(?:on|via|through)\\s+whatsapp\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(?:message|text)\\s+(.+?)\\s+(?:on|via|through)\\s+whatsapp\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?(?:\\s+to\\s+|\\s+)(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+to\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?(.+?)\\s+(?:a\\s+)?whatsapp(?:\\s+message)?\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^whatsapp\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^whatsapp\\s+(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:send\\s+)?whatsapp(?:\\s+message)?\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_UNSUPPORTED_CHANNEL", 0.93f, listOf(
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)([a-zA-Z0-9]+)\\s+message\\s+to\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^send\\s+(?!(?:a|whatsapp|text|message|sms)\\b)([a-zA-Z0-9]+)\\s+message\\s+(.+?)\\s+(?:saying|that|:)?\\s*(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("SEND_MESSAGE", 0.92f, listOf(
+            Regex("^(?:text|message)\\s+(.+?)\\s+(?:saying|that|:)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:text|message)\\s+(?:saying|that)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:text|message)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^tell\\s+(?!me\\b)(.+?)\\s+(?:that|to)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^tell\\s+(?!me\\b)(.+?)\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^send\\s+this\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+        IntentDef("CONTACT_LOOKUP", 0.91f, listOf(
+            Regex("^(?:get|show|look\\s*up|find|do\\s+i\\s+have)\\s+(.+?)(?:'s)?\\s+(?:number|phone|contact)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:find|look\\s*up)\\s+(?:the\\s+)?(?:contact|number|phone)\\s+(?:for\\s+)?(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:find|look\\s*up)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )),
+
+
         // ─── WiFi ──────────────────────────────────────────────────────
         IntentDef("WIFI_ON", 0.93f, listOf(
             Regex("turn\\s*(on|enable)\\s*wi.?fi", RegexOption.IGNORE_CASE),
@@ -88,7 +171,10 @@ class IntentRouter {
             Regex("bluetooth\\s*(off|disable)", RegexOption.IGNORE_CASE)
         )),
 
-        // ─── Volume ────────────────────────────────────────────────────
+        IntentDef("SET_VOLUME", 0.95f, listOf(
+            Regex("(?:set|change|adjust)\\s+(?:the\\s+)?volume\\s+(?:to\\s+)?(\\d+)(?:\\s*(?:percent|%))?", RegexOption.IGNORE_CASE),
+            Regex("(?:set|change|adjust)\\s+(?:the\\s+)?volume\\s+(?:to\\s+)?(zero|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?:\\s*(?:percent|%))?", RegexOption.IGNORE_CASE)
+        ), mapOf("level" to 1)),
         IntentDef("VOLUME_UP", 0.92f, listOf(
             Regex("volume\\s*(up|increase|louder|raise)", RegexOption.IGNORE_CASE),
             Regex("(increase|raise|turn\\s*up)\\s*(the\\s*)?volume", RegexOption.IGNORE_CASE),
@@ -98,6 +184,27 @@ class IntentRouter {
             Regex("volume\\s*(down|decrease|lower|quiet)", RegexOption.IGNORE_CASE),
             Regex("(decrease|lower|turn\\s*down)\\s*(the\\s*)?volume", RegexOption.IGNORE_CASE),
             Regex("^quieter$", RegexOption.IGNORE_CASE)
+        )),
+
+        // ─── Volume & Device Settings ─────────────────────────────────
+        IntentDef("VOLUME_MAX", 0.95f, listOf(
+            Regex("(?:volume\\s*(?:to\\s*)?max|max\\s*volume|full\\s*volume|turn\\s*volume\\s*(?:all\\s*the\\s*way\\s*)?up)", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("VOLUME_MIN", 0.95f, listOf(
+            Regex("(?:volume\\s*(?:to\\s*)?min|min\\s*volume|lowest\\s*volume|minimum\\s*volume)", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("MUTE", 0.95f, listOf(
+            Regex("^(?:mute|mute\\s+volume|mute\\s+audio)$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+(?:phone\\s+)?settings?$", RegexOption.IGNORE_CASE),
+            Regex("^settings?$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_WIFI_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+wifi\\s+settings?$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("OPEN_BLUETOOTH_SETTINGS", 0.95f, listOf(
+            Regex("^(?:open|go\\s+to)\\s+bluetooth\\s+settings?$", RegexOption.IGNORE_CASE)
         )),
 
         // ─── Silent ────────────────────────────────────────────────────
@@ -186,34 +293,11 @@ class IntentRouter {
 
         // ─── Navigation ────────────────────────────────────────────────
         IntentDef("NAVIGATE", 0.91f, listOf(
-<<<<<<< HEAD
             Regex("navigate\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("directions?\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("take\\s*me\\s*to\\s*(.+)", RegexOption.IGNORE_CASE),
             Regex("how\\s*do\\s*i\\s*get\\s*to\\s*(.+)", RegexOption.IGNORE_CASE)
         ), paramExtractors = mapOf("destination" to 1)),
-=======
-            Regex("navigate\\s*(to)?\\s+(.+?)\\s+then\\s+(.+?)\\s+and\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("(visit|go to)\\s+(.+?)\\s+and\\s+then\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("navigate\\s*(to)?\\s+(.+?,.+)", RegexOption.IGNORE_CASE),
-            Regex("navigate\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-            Regex("(take|show|give)\\s*me\\s*(directions?|route)\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-            Regex("(go|directions?)\\s*(to)?\\s*(.+)", RegexOption.IGNORE_CASE),
-        )),
-
-        // ─── Messaging ─────────────────────────────────────────────────
-        IntentDef("SEND_MESSAGE", 0.92f, listOf(
-            Regex("message\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-            Regex("send\\s+text\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-            Regex("send\\s+message\\s+(.+?)\\s+to\\s+(.+?)\\s+on\\s+(whatsapp|sms|instagram)", RegexOption.IGNORE_CASE),
-        ), paramExtractors = mapOf("message" to 1, "contact" to 2, "platform" to 3)),
-
-        // ─── Call ──────────────────────────────────────────────────────
-        IntentDef("CALL_CONTACT", 0.90f, listOf(
-            Regex("call\\s+(.+)", RegexOption.IGNORE_CASE),
-            Regex("(phone|ring|dial)\\s+(.+)", RegexOption.IGNORE_CASE),
-        ), paramExtractors = mapOf("contact" to 1)),
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 
         // ─── Mode System ───────────────────────────────────────────────
         IntentDef("MODE_ACTIVATE", 0.95f, listOf(
@@ -230,20 +314,82 @@ class IntentRouter {
             Regex("turn\\s*off\\s*(the\\s*)?screen", RegexOption.IGNORE_CASE)
         )),
 
-        // ─── Open App ──────────────────────────────────────────────────
+        // ─── Camera ────────────────────────────────────────────────────
+        IntentDef("TAKE_PHOTO", 0.94f, listOf(
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)(?:\\s+in\\s+(\\d+)\\s*(?:seconds|secs|s))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)(?:\\s+at\\s+(.+))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:take|click|capture|snap)\\s+(?:a\\s+)?(?:photo|picture|pic|selfie)$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("delay_seconds" to 1, "scheduled_time" to 1)),
+
+        IntentDef("RECORD_VIDEO", 0.94f, listOf(
+            Regex("^(?:record|shoot|take)\\s+(?:a\\s+)?video(?:\\s+for\\s+(\\d+)\\s*(?:seconds|secs|s))?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:record|shoot|take)\\s+(?:a\\s+)?video$", RegexOption.IGNORE_CASE),
+            Regex("^start\\s+recording\\s+video$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("duration_seconds" to 1)),
+
+        // ─── App Management ───────────────────────────────────────────
+        IntentDef("CLOSE_APP", 0.94f, listOf(
+            Regex("^(?:close|kill|exit|quit|stop)\\s+(?:the\\s+)?(.+?)(?:\\s+app)?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+(?:this|current|active)(?:\\s+app)?$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+app$", RegexOption.IGNORE_CASE),
+            Regex("^(?:close|exit|quit)\\s+this$", RegexOption.IGNORE_CASE),
+            Regex("^close$", RegexOption.IGNORE_CASE),
+            Regex("^exit$", RegexOption.IGNORE_CASE)
+        ), paramExtractors = mapOf("app_name" to 1)),
+
         IntentDef("OPEN_APP", 0.88f, listOf(
-            Regex("^open\\s+(\\w+)$", RegexOption.IGNORE_CASE),
-            Regex("^launch\\s+(\\w+)$", RegexOption.IGNORE_CASE),
-            Regex("^start\\s+(\\w+)$", RegexOption.IGNORE_CASE),
-            Regex("^go\\s+to\\s+(\\w+)$", RegexOption.IGNORE_CASE),
-            Regex("open\\s+the\\s+(\\w+)\\s*app", RegexOption.IGNORE_CASE)
+            Regex("open\\s+the\\s+(.+?)\\s*app", RegexOption.IGNORE_CASE),
+            Regex("^open\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^launch\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^start\\s+(.+)$", RegexOption.IGNORE_CASE),
+            Regex("^go\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE)
         ), paramExtractors = mapOf("app_name" to 1)),
 
         // ─── Call ──────────────────────────────────────────────────────
         IntentDef("CALL_CONTACT", 0.90f, listOf(
             Regex("^call\\s+(.+)$", RegexOption.IGNORE_CASE),
             Regex("^(phone|ring|dial)\\s+(.+)$", RegexOption.IGNORE_CASE)
-        ), paramExtractors = mapOf("contact" to 1))
+        ), paramExtractors = mapOf("contact" to 1)),
+
+        // ─── Conversational ─────────────────────────────────────────────
+        IntentDef("GREETING", 0.95f, listOf(
+            Regex("^(hello|hi|hey|yo|good\\s*morning|good\\s*afternoon|good\\s*evening)\\b", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("THANKS", 0.97f, listOf(
+            Regex("^(thank\\s*you|thanks|thx|thank)\\b", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("TIME", 0.98f, listOf(
+            Regex("what('s| is)\\s+the\\s+time", RegexOption.IGNORE_CASE),
+            Regex("what\\s+time\\s+is\\s+it", RegexOption.IGNORE_CASE),
+            Regex("^time$", RegexOption.IGNORE_CASE),
+            Regex("^current\\s+time$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("DATE", 0.98f, listOf(
+            Regex("what('s| is)\\s+the\\s+date", RegexOption.IGNORE_CASE),
+            Regex("what('s| is)\\s+today", RegexOption.IGNORE_CASE),
+            Regex("what\\s+day\\s+is\\s+it", RegexOption.IGNORE_CASE),
+            Regex("^date$", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("CAPABILITIES", 0.95f, listOf(
+            Regex("what\\s+can\\s+you\\s+do", RegexOption.IGNORE_CASE),
+            Regex("^help$", RegexOption.IGNORE_CASE),
+            Regex("help\\s+me", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("SMALLTALK", 0.90f, listOf(
+            Regex("how\\s+are\\s+you", RegexOption.IGNORE_CASE),
+            Regex("who\\s+are\\s+you", RegexOption.IGNORE_CASE),
+            Regex("what('s| is)\\s+your\\s+name", RegexOption.IGNORE_CASE),
+            Regex("(what('s| is)|tell\\s*me).*your\\s+name", RegexOption.IGNORE_CASE),
+            Regex("^your\\s+name", RegexOption.IGNORE_CASE),
+            Regex("are\\s+you\\s+there", RegexOption.IGNORE_CASE),
+            Regex("^are\\s+you$", RegexOption.IGNORE_CASE),
+            Regex("are\\s+you\\s+(awake|online|listening|alive|real|still)", RegexOption.IGNORE_CASE),
+            Regex("^you\\s+there$", RegexOption.IGNORE_CASE),
+            Regex("what('s| is)\\s+that", RegexOption.IGNORE_CASE),
+            Regex("what('s| is)\\s+up", RegexOption.IGNORE_CASE),
+            Regex("good\\s+job", RegexOption.IGNORE_CASE),
+            Regex("you('re| are)\\s+(great|awesome|the\\s+best|amazing)", RegexOption.IGNORE_CASE)
+        ))
     )
 
     fun route(perceived: String): IntentResult {
@@ -264,7 +410,6 @@ class IntentRouter {
                         }
                     }
                 }
-<<<<<<< HEAD
                 if (stepActions.size > 1) {
                     val jsonArray = JSONArray()
                     stepActions.forEach { jsonArray.put(it) }
@@ -273,27 +418,6 @@ class IntentRouter {
                         action = "CHAIN",
                         params = mapOf("steps" to jsonArray.toString()),
                         confidence = 0.95f,
-=======
-
-                if (intent.action == "NAVIGATE") {
-                    val destinations = extractDestinationsFromMatch(match.groupValues)
-                    if (destinations.isNotEmpty()) {
-                        params["destinations"] = destinations.joinToString("|")
-                        params["destination"] = destinations.last()
-                    }
-                }
-
-                if (intent.action == "SEND_MESSAGE") {
-                    params["platform"] = params["platform"]?.lowercase() ?: "sms"
-                }
-
-                if (intent.baseConfidence > bestConfidence) {
-                    bestConfidence = intent.baseConfidence
-                    bestMatch = IntentResult(
-                        action = intent.action,
-                        params = params,
-                        confidence = bestConfidence,
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
                         rawInput = perceived
                     )
                 }
@@ -308,14 +432,22 @@ class IntentRouter {
         var bestConfidence = 0f
 
         for (intent in intents) {
-            for (pattern in intent.patterns) {
+            for ((patternIndex, pattern) in intent.patterns.withIndex()) {
                 val match = pattern.find(trimmed) ?: continue
                 val params = mutableMapOf<String, String>()
 
-                for ((paramName, groupIndex) in intent.paramExtractors) {
-                    runCatching {
-                        val value = match.groupValues.getOrNull(groupIndex)?.trim() ?: ""
-                        if (value.isNotEmpty()) params[paramName] = value
+                if (intent.action in COMMUNICATION_ACTIONS) {
+                    params.putAll(communicationParams(intent.action, match, patternIndex))
+                } else if (intent.action == "SET_ALARM") {
+                    params.putAll(alarmTimeParams(trimmed) ?: mapOf("needs_clarification" to "time"))
+                } else if (intent.action == "SET_TIMER") {
+                    params.putAll(timerDurationParams(trimmed) ?: mapOf("needs_clarification" to "duration"))
+                } else {
+                    for ((paramName, groupIndex) in intent.paramExtractors) {
+                        runCatching {
+                            val value = match.groupValues.getOrNull(groupIndex)?.trim() ?: ""
+                            if (value.isNotEmpty()) params[paramName] = value
+                        }
                     }
                 }
 
@@ -353,6 +485,48 @@ class IntentRouter {
         return IntentResult(action = "UNKNOWN", rawInput = trimmed, confidence = 0.1f)
     }
 
+    /** Parses a clock time from an alarm request or a short clarification reply. */
+    fun alarmTimeParams(input: String): Map<String, String>? {
+        val match = Regex(
+            "^(?:.*?\\b(?:at|for)\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)?(?=\\s|$)",
+            RegexOption.IGNORE_CASE
+        ).find(input.trim()) ?: return null
+        val rawHour = match.groupValues[1].toIntOrNull() ?: return null
+        val minutes = match.groupValues[2].ifBlank { "0" }.toIntOrNull() ?: return null
+        val meridiem = match.groupValues[3].replace(".", "").lowercase()
+        if (minutes !in 0..59 || rawHour !in 0..23) return null
+        if (meridiem.isNotBlank() && rawHour !in 1..12) return null
+        if (meridiem.isBlank() && rawHour in 1..12) {
+            return mapOf(
+                "hour" to rawHour.toString(),
+                "minutes" to minutes.toString(),
+                "needs_clarification" to "AM or PM"
+            )
+        }
+        val hour = when (meridiem) {
+            "am" -> rawHour % 12
+            "pm" -> (rawHour % 12) + 12
+            else -> rawHour
+        }
+        return mapOf("hour" to hour.toString(), "minutes" to minutes.toString())
+    }
+
+    /** Parses explicit timer durations and marks bare numbers for clarification. */
+    fun timerDurationParams(input: String): Map<String, String>? {
+        val match = Regex("(\\d+)\\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?\\b", RegexOption.IGNORE_CASE)
+            .find(input.trim()) ?: return null
+        val amount = match.groupValues[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val unit = match.groupValues[2].lowercase()
+        if (unit.isBlank()) return mapOf("duration_amount" to amount.toString(), "needs_clarification" to "unit")
+        val multiplier = when {
+            unit.startsWith("h") -> 3600
+            unit.startsWith("m") -> 60
+            else -> 1
+        }
+        return mapOf("length_seconds" to (amount * multiplier).toString())
+    }
+
+    @Suppress("UNUSED_PARAMETER")
     fun fallback(intent: IntentResult): IntentResult? = null
 
     fun buildSteps(intent: IntentResult): List<ActionStep> = listOf(
@@ -364,19 +538,54 @@ class IntentRouter {
         )
     )
 
-    private fun extractDestinationsFromMatch(groups: List<String>): List<String> {
-        val combined = groups.drop(1)
-            .firstOrNull { it.contains("then", ignoreCase = true) || it.contains(",") }
-            ?: groups.drop(1).firstOrNull { it.isNotBlank() }
-            ?: return emptyList()
+    companion object {
+        val COMMUNICATION_ACTIONS = setOf(
+            "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE", "MESSAGE_GROUP",
+            "CONTACT_LOOKUP", "SEND_UNSUPPORTED_CHANNEL"
+        )
 
-        return combined
-            .replace(Regex("\\s+and\\s+then\\s+", RegexOption.IGNORE_CASE), " then ")
-            .replace(Regex("\\s+then\\s+", RegexOption.IGNORE_CASE), "|")
-            .replace(" and ", "|")
-            .replace(",", "|")
-            .split("|")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        /**
+         * Extracts communication params per matched pattern. Communication
+         * patterns do not share a uniform group layout, so extraction is done
+         * explicitly instead of via IntentDef.paramExtractors.
+         */
+        fun communicationParams(
+            action: String,
+            match: MatchResult,
+            patternIndex: Int
+        ): Map<String, String> = when (action) {
+            "MESSAGE_GROUP" -> mapOf(
+                "group" to (match.groupValues.getOrNull(1)?.trim()?.removePrefix("the ") ?: ""),
+                "message" to (match.groupValues.getOrNull(2)?.trim() ?: "")
+            )
+            "SEND_WHATSAPP_MESSAGE" -> buildMap {
+                put("channel", "whatsapp")
+                (match.groupValues.getOrNull(1)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("recipient", it) }
+                (match.groupValues.getOrNull(2)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("message", it) }
+            }
+            "SEND_MESSAGE" -> when (patternIndex) {
+                // "(text|message) saying/that <body>" → body only, recipient unknown
+                1 -> mapOf("message" to (match.groupValues.getOrNull(1)?.trim() ?: ""))
+                // "send this to <recipient>" → recipient + screen-content marker
+                5 -> mapOf(
+                    "recipient" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                    "message" to "<screen>"
+                )
+                else -> buildMap {
+                    put("channel", "sms")
+                    (match.groupValues.getOrNull(1)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("recipient", it) }
+                    (match.groupValues.getOrNull(2)?.trim() ?: "").takeIf { it.isNotEmpty() }?.let { put("message", it) }
+                }
+            }
+            "SEND_UNSUPPORTED_CHANNEL" -> mapOf(
+                "channel" to (match.groupValues.getOrNull(1)?.trim() ?: ""),
+                "recipient" to (match.groupValues.getOrNull(2)?.trim() ?: ""),
+                "message" to (match.groupValues.getOrNull(3)?.trim() ?: "")
+            )
+            "CONTACT_LOOKUP" -> mapOf(
+                "contact" to (match.groupValues.getOrNull(1)?.trim() ?: "")
+            )
+            else -> emptyMap()
+        }
     }
 }

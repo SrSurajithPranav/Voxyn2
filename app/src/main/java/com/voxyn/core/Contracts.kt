@@ -25,6 +25,7 @@ sealed class VerificationOutcome {
     object PartialSuccess : VerificationOutcome()
     object Failure : VerificationOutcome()
     object NeedsRollback : VerificationOutcome()
+    object Unverified : VerificationOutcome()
 }
 
 // ─── Execution Plan ───────────────────────────────────────────────────────────

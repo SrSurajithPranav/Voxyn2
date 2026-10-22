@@ -1,29 +1,33 @@
 package com.voxyn.execution
 
+import com.voxyn.core.ActionStep
+
 /**
- * Read-only directory of capabilities supplied by dependency injection.
+ * Resolves planned actions to DI-provided capabilities.
  *
- * Selection policy, permission evaluation, execution, and health tracking
- * remain outside this registry until their dedicated milestones.
+ * A duplicate action is a composition error: it would otherwise make action
+ * selection depend on registration order.
  */
 class CapabilityRegistry(capabilities: List<Capability>) {
-    private val capabilitiesById: Map<String, Capability> = capabilities.associateBy { it.metadata.id }
-    private val capabilitiesByAction: Map<String, List<Capability>> = capabilities
-        .flatMap { capability ->
-            capability.metadata.supportedActions.map { action -> action to capability }
-        }
-        .groupBy({ (action, _) -> action }, { (_, capability) -> capability })
+    private val capabilitiesByAction: Map<String, Capability> = buildMap {
+        capabilities.forEach { capability ->
+            require(capability.supportedActions.isNotEmpty()) {
+                "Capability '${capability.id}' must support at least one action"
+            }
 
-    init {
-        require(capabilitiesById.size == capabilities.size) {
-            "Capability identifiers must be unique"
+            capability.supportedActions.forEach { action ->
+                require(put(action, capability) == null) {
+                    "Multiple capabilities support action '$action'"
+                }
+            }
         }
     }
 
-    fun get(id: String): Capability? = capabilitiesById[id]
+    fun find(action: String): Capability? = capabilitiesByAction[action]
 
-    fun findAll(action: String): List<Capability> =
-        capabilitiesByAction[action].orEmpty()
+    fun find(step: ActionStep): Capability? = find(step.actionType)
 
-    fun all(): Collection<Capability> = capabilitiesById.values
+    fun all(): List<Capability> = capabilitiesByAction.values.distinct()
+
+    fun supportedActions(): Set<String> = capabilitiesByAction.keys
 }

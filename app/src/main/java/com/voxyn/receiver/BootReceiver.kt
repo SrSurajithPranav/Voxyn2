@@ -1,9 +1,12 @@
 package com.voxyn.receiver
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
 
@@ -13,6 +16,21 @@ class BootReceiver : BroadcastReceiver() {
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         VoxynLogger.i("Boot complete — restarting VOXYN services", "BOOT")
+
+        // Restart the always-on voice service on boot (BOOT_COMPLETED is an allowed FGS start)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) {
+            try {
+                context.startForegroundService(
+                    Intent(context, com.voxyn.voice.VoiceInputService::class.java).apply {
+                        action = com.voxyn.voice.VoiceInputService.ACTION_START_LISTENING
+                    }
+                )
+                VoxynLogger.i("VoiceInputService started on boot (24x7 Always-Listening Mode)", "BOOT")
+            } catch (e: Exception) {
+                VoxynLogger.e("Boot VoiceInputService start failed: ${e.message}", tag = "BOOT")
+            }
+        }
 
         if (Settings.canDrawOverlays(context)) {
             try {

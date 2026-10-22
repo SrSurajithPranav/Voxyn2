@@ -11,8 +11,14 @@ android {
         applicationId = "com.voxyn"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 20
+        versionName = "1.0.19"
+        buildConfigField("String", "CLAUDE_API_KEY", "\"\"")
+        ndk {
+            // The user's device is ARM64; shipping only arm64 keeps the APK small
+            // (sherpa-onnx + onnxruntime + Vosk native libs are ~60 MB per ABI).
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -28,6 +34,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     kotlinOptions {
@@ -58,7 +68,6 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
 
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons)
 
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
@@ -70,6 +79,14 @@ dependencies {
     // Offline wake-word (Vosk)
     implementation("com.alphacephei:vosk-android:0.3.75")
 
+    // On-device LLM (MediaPipe GenAI) — local conversational AI
+    implementation(libs.mediapipe.genai)
+
+    // Command STT (sherpa-onnx + NVIDIA Parakeet-TDT 0.6B v3 INT8)
+    implementation(libs.sherpa.onnx)
+
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    testImplementation("junit:junit:4.13.2")
 }

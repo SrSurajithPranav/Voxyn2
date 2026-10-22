@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -41,7 +42,11 @@ class OverlayService : Service() {
         super.onCreate()
         instance = this
         createChannel()
-        startForeground(NOTIF_ID, buildNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
+        }
         VoxynLogger.i("OverlayService created", "OVERLAY")
 
         // Post island creation to main thread to ensure it runs after startForeground
@@ -79,8 +84,14 @@ class OverlayService : Service() {
     // ─── Island creation ──────────────────────────────────────────────
 
     private fun showDynamicIsland() {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            VoxynLogger.w("Cannot draw overlays — skipping DynamicIsland creation", "OVERLAY")
+            return
+        }
         try {
-            wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            removeDynamicIsland()
+            wm = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            val windowManager = wm ?: return
             val density = resources.displayMetrics.density
             val topMarginPx = (8 * density).toInt()
 
@@ -105,9 +116,10 @@ class OverlayService : Service() {
                 y = topMarginPx
             }
 
-            dynamicIsland = DynamicIsland(this, wm!!, layoutParams!!)
+            val island = DynamicIsland(this, windowManager, layoutParams!!)
+            dynamicIsland = island
 
-            wm?.addView(dynamicIsland, layoutParams)
+            windowManager.addView(island, layoutParams)
             islandReady = true
             VoxynLogger.i("DynamicIsland overlay added (120dp × 36dp @ y=8dp, top-center)", "OVERLAY")
 
@@ -119,12 +131,17 @@ class OverlayService : Service() {
 
         } catch (e: Exception) {
             VoxynLogger.e("Failed to add DynamicIsland: ${e.message}", tag = "OVERLAY")
+            dynamicIsland = null
+            islandReady = false
         }
     }
 
     private fun removeDynamicIsland() {
         try {
-            dynamicIsland?.let { wm?.removeView(it) }
+            val island = dynamicIsland
+            if (island != null) {
+                wm?.removeView(island)
+            }
         } catch (_: Exception) {}
         dynamicIsland = null
         islandReady = false

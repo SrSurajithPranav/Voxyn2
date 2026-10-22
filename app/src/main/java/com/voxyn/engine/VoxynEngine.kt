@@ -2,115 +2,115 @@ package com.voxyn.engine
 
 import android.content.Context
 import android.content.Intent
-<<<<<<< HEAD
-=======
-import android.media.AudioManager
-import android.media.ToneGenerator
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 import com.voxyn.ai.ClaudeIntentResolver
 import com.voxyn.ai.ClaudeResult
+import com.voxyn.ai.GeneralQueryResolver
+import com.voxyn.ai.LocalKnowledgeProvider
+import com.voxyn.ai.WorldTimeProvider
+import com.voxyn.communication.ContactResolution
+import com.voxyn.communication.ContactResolver
 import com.voxyn.core.*
 import com.voxyn.execution.ExecutionController
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
 import com.voxyn.overlay.OverlayService
+import com.voxyn.perception.SpeechNormalizer
+import com.voxyn.router.RequestRouter
+import com.voxyn.router.RouteDecision
+import com.voxyn.router.RouteType
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.voice.ConversationSession
 import com.voxyn.voice.TextToSpeechManager
-import com.voxyn.voice.VoiceInputService
-import com.voxyn.wake.WakeWordService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONArray
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+private data class ContactClarificationState(
+    val intent: IntentResult,
+    val candidates: List<Pair<String, String>>,
+    val askedFor: String
+)
+
+private data class MessageDraftState(
+    val recipient: String?,
+    val phone: String?,
+    val message: String?,
+    val channel: String,
+    val action: String
+)
+
+private data class ExecutedStep(val step: ActionStep, val result: String)
+private data class ExecutionTrace(val plan: ExecutionPlan, val steps: List<ExecutedStep>)
 
 class VoxynEngine(
     private val scope          : CoroutineScope,
-<<<<<<< HEAD
     private val context        : Context,
-=======
-    private val appContext     : Context,
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     private val memory         : MemoryRepository,
     private val intentRouter   : IntentRouter,
     private val executor       : ExecutionController,
     private val tts            : TextToSpeechManager,
+    private val conversationSession : ConversationSession,
+    private val speechNormalizer : SpeechNormalizer,
+    private val requestRouter    : RequestRouter,
+    private val worldTimeProvider: WorldTimeProvider,
+    private val generalQuery     : GeneralQueryResolver,
+    private val localKnowledge   : LocalKnowledgeProvider,
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
+    private val contactResolver: ContactResolver,
     private val phaseTimeoutMs : Long = 10_000L
 ) {
     private val _events = MutableSharedFlow<PipelineEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<PipelineEvent> = _events
 
-<<<<<<< HEAD
     private var activeJob    : Job? = null
     private var pendingInput : String? = null
-=======
-    private var activeJob         : Job? = null
-    private var pendingInput      : String? = null
-    private var skipConfirmation  : Boolean = false
-    private var isSessionActive   : Boolean = false
-    private val conversationHistory = mutableListOf<String>()
+    private var pendingIntent : IntentResult? = null
+    private var pendingClarification : ContactClarificationState? = null
+    private var pendingDraft : MessageDraftState? = null
+    private var pendingClockIntent : IntentResult? = null
+    private var pipelineGen  = 0L
 
-    private val YES_WORDS = setOf("yes", "yeah", "yep", "yup", "sure", "ok", "okay",
-        "confirm", "do it", "proceed", "go ahead", "affirmative")
-    private val NO_WORDS  = setOf("no", "nope", "nah", "cancel", "stop", "abort",
-        "never mind", "nevermind", "don't", "dont")
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
+    @Volatile
+    private var processing = false
 
-    fun process(input: String): Job {
+    fun isProcessing(): Boolean = processing
+
+    fun process(input: String) {
         activeJob?.cancel()
-        return scope.launch { runPipeline(input) }.also { activeJob = it }
+        val gen = ++pipelineGen
+        processing = true
+        activeJob = scope.launch {
+            try {
+                runPipeline(input)
+            } finally {
+                if (gen == pipelineGen) processing = false
+            }
+        }
     }
 
     fun interrupt(reason: String = "Interrupted") {
         activeJob?.cancel()
+        pendingInput = null
+        pendingIntent = null
+        pendingClarification = null
+        pendingDraft = null
+        pendingClockIntent = null
         emit(PipelineEvent.EngineInterrupted(reason))
         tts.speak("Cancelled.")
-<<<<<<< HEAD
         setOverlay("IDLE")
-=======
-        if (isSessionActive) {
-            continueSessionAfterPrompt()
-        } else {
-            resumeWakeListening()
-        }
-    }
-
-    fun confirm() {
-        val pending = pendingInput ?: return
-        skipConfirmation = true
-        activeJob?.cancel()
-        activeJob = scope.launch { runPipeline(pending) }
-    }
-
-    fun deny() {
-        pendingInput = null
-        skipConfirmation = false
-        activeJob?.cancel()
-        emit(PipelineEvent.EngineInterrupted("User cancelled"))
-        tts.speak("Cancelled.")
-        if (isSessionActive) {
-            continueSessionAfterPrompt()
-        } else {
-            resumeWakeListening()
-        }
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
     }
 
     fun resumePending() { pendingInput?.let { process(it) } }
 
-    fun onFollowUpTimeout() {
-        isSessionActive = false
-        conversationHistory.clear()
-        resumeWakeListening()
-        VoxynLogger.i("Conversation session ended after silence timeout", "ENGINE")
-    }
-
     // ─── Pipeline ─────────────────────────────────────────────────────
 
     private suspend fun runPipeline(raw: String) {
-<<<<<<< HEAD
         VoxynLogger.i("▶ Starting pipeline for: \"$raw\"", "ENGINE")
         emit(PipelineEvent.PhaseStarted(PipelinePhase.INPUT))
         emit(PipelineEvent.PhaseCompleted(PipelinePhase.INPUT, raw))
@@ -118,86 +118,148 @@ class VoxynEngine(
         setOverlay("LISTENING")
 
         val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) } ?: return
-        setOverlay("PROCESSING")
+        setOverlay("THINKING")
 
-        var intent = phase(PipelinePhase.INTENT) { resolveIntent(perceived) } ?: return
-=======
-        VoxynLogger.i("▶ \"$raw\"", "ENGINE")
-        tts.stop()
-
-        conversationHistory.add(raw)
-        if (conversationHistory.size > 12) {
-            conversationHistory.removeAt(0)
-        }
-
-        val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) }
-            ?: return onPipelineEarlyReturn()
-        var intent = phase(PipelinePhase.INTENT) { resolveIntent(perceived) }
-            ?: return onPipelineEarlyReturn()
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
-        var claudeSpeak: String? = null
-
-        // Claude fallback for UNKNOWN intent
-        if (intent.action == "UNKNOWN" && claudeResolver != null) {
-            VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
-            setOverlay("PROCESSING", "Thinking...")
-            tts.speak("Let me check...")
-            val result: ClaudeResult? = try {
-                withTimeout(12_000L) {
-                    claudeResolver.resolve(
-                        userInput = perceived,
-                        conversationHistory = conversationHistory
-                    )
-                }
-            } catch (e: Exception) {
-                VoxynLogger.e("Claude error: ${e.message}", tag = "ENGINE"); null
-            }
-            if (result != null && result.intent.action != "UNKNOWN") {
-                intent = result.intent
-                claudeSpeak = result.speakOverride
-                VoxynLogger.i("Claude resolved intent: ${intent.action}", "ENGINE")
+        // ─── Pending conversational flows (confirmation / clarification / draft) ─
+        if (pendingIntent != null) {
+            when {
+                isYesVariant(perceived) -> { runConfirmedIntent(); return }
+                isNoVariant(perceived) -> { cancelPendingConfirmation(); return }
             }
         }
-
-        if (intent.action == "UNKNOWN") {
-            tts.speak("I didn't understand that command. Try saying turn on WiFi, open YouTube, or scroll down.")
-            emit(PipelineEvent.ClarificationRequired(listOf("Unknown command")))
-<<<<<<< HEAD
-            setOverlay("ERROR", "Unknown command")
-            delay(1500L)
-            setOverlay("IDLE")
-=======
-            if (isSessionActive) continueSessionAfterPrompt()
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
+        if (pendingClockIntent != null) {
+            continueClockClarification(perceived)
+            return
+        }
+        if (pendingClarification != null) {
+            runContactClarification(perceived)
+            return
+        }
+        if (pendingDraft != null) {
+            runMessageDraft(perceived)
             return
         }
 
-        val confidence = phase(PipelinePhase.CONFIDENCE) { scoreConfidence(intent) }
-            ?: return onPipelineEarlyReturn()
-        val risk = phase(PipelinePhase.RISK) { assessRisk(intent) }
-            ?: return onPipelineEarlyReturn()
-        val decision = phase(PipelinePhase.DECISION) { decide(intent, confidence, risk) }
-            ?: return onPipelineEarlyReturn()
+        // Hybrid routing: memory / current information / web / knowledge first.
+        val route = requestRouter.route(perceived)
+        VoxynLogger.i("[ROUTER] ${route.type} confidence=${route.confidence}", "ROUTER")
+        when (route.type) {
+            RouteType.MEMORY_SAVE -> { handleMemorySave(route); return }
+            RouteType.MEMORY_RECALL -> { handleMemoryRecall(route); return }
+            RouteType.MEMORY_FORGET -> { handleMemoryForget(route); return }
+            RouteType.WEB_REQUIRED -> { handleGeneralQuery(route, perceived); return }
+            RouteType.CONVERSATIONAL -> { handleGeneralQuery(route, perceived); return }
+            RouteType.WEATHER -> { handleGeneralQuery(route, perceived); return }
+            RouteType.DISTANCE -> { handleGeneralQuery(route, perceived); return }
+            RouteType.CURRENT_INFORMATION -> {
+                if (route.params.containsKey("city")) { handleWorldTime(route); return }
+                handleGeneralQuery(route, perceived); return
+            }
+            else -> Unit
+        }
+
+        var intent = phase(PipelinePhase.INTENT) { resolveIntent(perceived) } ?: return
+        var claudeSpeak: String? = null
+
+        if (handleConversational(intent, perceived)) return
+
+        if (intent.action == "UNKNOWN") {
+            // Hybrid general intelligence: local LLM → web → cloud, then the
+            // optional cloud intent parser, then a graceful unknown response.
+            val general = runCatching {
+                withTimeout(60_000L) { generalQuery.resolve(perceived, conversationSession.getContext()) }
+            }.getOrNull()
+            if (general != null) {
+                completeConversational("GENERAL", general.text, general.params)
+                return
+            }
+
+            if (claudeResolver != null) {
+                VoxynLogger.i("Local router returned UNKNOWN — invoking Claude AI fallback", "ENGINE")
+                setOverlay("THINKING", "Thinking...")
+                acknowledge()
+                val result: ClaudeResult? = try {
+                    val contextPrompt = conversationSession.getContext().ifEmpty { "No prior conversation." }
+                    withTimeout(12_000L) { claudeResolver.resolve("$perceived\n\nConversation context:\n$contextPrompt") }
+                } catch (e: Exception) {
+                    VoxynLogger.e("Claude error: ${e.message}", tag = "ENGINE"); null
+                }
+                if (result != null && result.intent.action != "UNKNOWN") {
+                    intent = result.intent
+                    claudeSpeak = result.speakOverride
+                    VoxynLogger.i("Claude resolved intent: ${intent.action}", "ENGINE")
+                    if (handleConversational(intent, perceived)) return
+                    continuePipeline(intent, claudeSpeak, perceived)
+                    return
+                }
+            }
+
+            val phrase = unknownResponse()
+            conversationSession.updateLastTurn("UNKNOWN", phrase)
+            emit(PipelineEvent.ClarificationRequired(listOf("Unknown command")))
+            setOverlay("ERROR", "Unknown command")
+            delay(1500L)
+            setOverlay("IDLE")
+            return
+        }
+
+        continuePipeline(intent, claudeSpeak, perceived)
+    }
+
+    /**
+     * Decision → execution tail of the pipeline. Shared by the normal path and
+     * by clarified/confirmed intents after contact resolution or a "yes".
+     */
+    private suspend fun continuePipeline(originalIntent: IntentResult, claudeSpeak: String?, perceived: String) {
+        var intent = originalIntent
+        // ─── Communication flows (resolution, drafts, group seam) ─────────
+        when {
+            intent.action == "MESSAGE_GROUP" -> { respondGroupUnsupported(intent); return }
+            intent.action == "CONTACT_LOOKUP" -> { handleContactLookup(intent); return }
+            intent.action == "SEND_UNSUPPORTED_CHANNEL" -> { respondUnsupportedChannel(intent); return }
+            intent.action in CONTACT_INTENTS -> {
+                val resolved = resolveContactsForIntent(intent) ?: return
+                if (resolved.action in SEND_INTENTS && !resolved.params.containsKey("message")) {
+                    startMessageDraft(resolved)
+                    return
+                }
+                if (resolved.action in SEND_INTENTS && resolved.params["recipient"].isNullOrBlank()) {
+                    startRecipientDraft(resolved)
+                    return
+                }
+                intent = resolved
+            }
+        }
+
+        val confidence = phase(PipelinePhase.CONFIDENCE) { scoreConfidence(intent) } ?: return
+        val risk       = phase(PipelinePhase.RISK)       { assessRisk(intent) }       ?: return
+        val decision   = phase(PipelinePhase.DECISION)   { decide(intent, confidence, risk) } ?: return
 
         emit(PipelineEvent.DecisionMade(decision))
 
         when (decision) {
             is DecisionState.AwaitingConfirmation -> {
-                pendingInput = raw
+                pendingInput = perceived
+                pendingIntent = intent
                 val promptText = "Confirm ${friendlyAction(intent.action)}?"
                 setOverlay("CONFIRMATION", promptText)
-                tts.speak("Should I ${friendlyAction(intent.action)}? Say yes to confirm.")
+                tts.speak("Just to confirm — should I ${confirmActionPhrase(intent)}? Say yes.")
                 emit(PipelineEvent.ConfirmationRequired(decision.intent))
-                if (isSessionActive) continueSessionAfterPrompt()
                 return
             }
             is DecisionState.AwaitingClarification -> {
-                pendingInput = raw
-                val msg = decision.missing.firstOrNull() ?: "please clarify"
+                pendingInput = perceived
+                if (intent.action == "SET_ALARM" || intent.action == "SET_TIMER") pendingClockIntent = intent
+                val msg = when (intent.params["needs_clarification"]) {
+                    "time" -> "What time should I set the alarm for?"
+                    "AM or PM" -> "Is that AM or PM?"
+                    "duration" -> "How long should I set the timer for?"
+                    "unit" -> "Is that seconds, minutes, or hours?"
+                    else -> decision.missing.firstOrNull() ?: "Please clarify."
+                }
                 setOverlay("ERROR", msg)
-                tts.speak("I need more info: $msg.")
-                emit(PipelineEvent.ClarificationRequired(decision.missing))
-<<<<<<< HEAD
+                tts.speak(msg)
+                emit(PipelineEvent.ClarificationRequired(listOf(msg)))
                 delay(1500L)
                 setOverlay("IDLE")
                 return
@@ -212,74 +274,290 @@ class VoxynEngine(
             is DecisionState.Execute -> Unit
         }
 
+        acknowledge()
+
         // ─── Handling Smart Chain Commands ───────────────────────────
         if (intent.action == "CHAIN" || intent.params.containsKey("steps")) {
             val stepsStr = intent.params["steps"] ?: "[]"
-            runChainExecution(stepsStr, claudeSpeak)
+            runChainExecution(intent.action, stepsStr, claudeSpeak)
             return
         }
 
-        // Single Step Execution
+        executeIntent(intent, claudeSpeak)
+    }
+
+    /** Executes a single, already-decided intent through plan → verify → learn. */
+    private suspend fun executeIntent(intent: IntentResult, claudeSpeak: String?) {
         val actionText = friendlyAction(intent.action)
-        setOverlay("SPEAKING", actionText)
+        setOverlay("EXECUTING", actionText)
 
         val plan     = phase(PipelinePhase.PLAN)   { buildPlan(intent) } ?: return
         val executed = executeWithRecovery(plan)    ?: return
         val outcome  = phase(PipelinePhase.VERIFY) { verify(executed) }  ?: return
-=======
-                if (isSessionActive) continueSessionAfterPrompt()
-                return
-            }
-            is DecisionState.Rejected -> {
-                tts.speak("That action was rejected.")
-                if (isSessionActive) continueSessionAfterPrompt()
-                return
-            }
-            is DecisionState.Execute  -> Unit
-        }
-
-        val plan = phase(PipelinePhase.PLAN) { buildPlan(intent) }
-            ?: return onPipelineEarlyReturn()
-        val executed = executeWithRecovery(plan)
-            ?: return onPipelineEarlyReturn()
-        val outcome = phase(PipelinePhase.VERIFY) { verify(executed) }
-            ?: return onPipelineEarlyReturn()
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
 
         emit(PipelineEvent.VerificationResult(outcome))
 
         val isSuccess = outcome is VerificationOutcome.Success
         setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
 
-        val speech = claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
-        tts.speakAndAwait(speech)
+        // A generated acknowledgement must not override a failed or unverified
+        // post-condition. Only use it after the capability reports success.
+        val speech = if (outcome == VerificationOutcome.Success) {
+            claudeSpeak ?: friendlySuccess(intent.action, intent.params, outcome)
+        } else {
+            friendlySuccess(intent.action, intent.params, outcome)
+        }
+        setOverlay("SPEAKING", speech)
+        tts.speak(speech)
+        conversationSession.updateLastTurn(intent.action, speech)
 
         phase(PipelinePhase.LEARN) { learn(intent, outcome) }
         pendingInput = null
+        pendingIntent = null
         emit(PipelineEvent.PipelineComplete)
-<<<<<<< HEAD
         VoxynLogger.i("✓ Pipeline complete", "ENGINE")
 
+        delay(1500L)
         setOverlay("IDLE")
-=======
+    }
 
-        if (shouldKeepSessionActive(intent.action)) {
-            isSessionActive = true
-            playFollowUpPromptChime()
-            startFollowUpListening()
-        } else {
-            isSessionActive = false
-            conversationHistory.clear()
-            resumeWakeListening()
+    // ─── Confirmation (yes / no) ───────────────────────────────────────
+
+    private suspend fun runConfirmedIntent() {
+        val intent = pendingIntent ?: return
+        pendingIntent = null
+        pendingInput = null
+        VoxynLogger.i("Confirmed: ${intent.action} — executing", "ENGINE")
+        acknowledge()
+        executeIntent(intent, null)
+    }
+
+    private fun cancelPendingConfirmation() {
+        pendingIntent = null
+        pendingInput = null
+        val speech = "Okay, cancelled."
+        tts.speak(speech)
+        conversationSession.updateLastTurn("CANCELLED", speech)
+        setOverlay("IDLE")
+        emit(PipelineEvent.PipelineComplete)
+        VoxynLogger.i("✓ Confirmation cancelled", "ENGINE")
+    }
+
+    // ─── Contact resolution & message drafts ───────────────────────────
+
+    private suspend fun resolveContactsForIntent(intent: IntentResult): IntentResult? {
+        val name = (intent.params["recipient"] ?: intent.params["contact"] ?: "").trim()
+        if (name.isBlank()) return intent
+        return when (val resolution = contactResolver.resolve(name)) {
+            is ContactResolution.Unique -> {
+                val params = intent.params.toMutableMap()
+                params["contact"] = resolution.displayName
+                params["phone"] = resolution.phoneNumber
+                if (params.containsKey("recipient")) params["recipient"] = resolution.displayName
+                VoxynLogger.i(
+                    "COMMUNICATION: recipient=${resolution.displayName} phone=${resolution.phoneNumber} action=${intent.action} status=RESOLVED",
+                    "ENGINE"
+                )
+                intent.copy(params = params)
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(intent, resolution.candidates, name)
+                val prompt = "I found ${resolution.candidates.size} contacts named $name. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                setOverlay("CLARIFICATION", "Which contact?")
+                emit(PipelineEvent.ClarificationRequired(resolution.candidates.map { it.first }))
+                null
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I couldn't find a contact named $name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                setOverlay("ERROR", "Contact not found")
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $name")))
+                null
+            }
         }
+    }
 
-        VoxynLogger.i("✓ Done", "ENGINE")
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
+    private suspend fun runContactClarification(perceived: String) {
+        val state = pendingClarification ?: return
+        val normalized = perceived.trim().lowercase()
+        val matched = state.candidates.firstOrNull {
+            it.first.lowercase() == normalized ||
+                it.first.lowercase().contains(normalized) ||
+                normalized.contains(it.first.lowercase())
+        }
+        if (matched != null) {
+            pendingClarification = null
+            continuePipeline(buildResolvedIntent(state.intent, matched.first, matched.second), null, perceived)
+            return
+        }
+        when (val res = contactResolver.resolve(perceived)) {
+            is ContactResolution.Unique -> {
+                pendingClarification = null
+                continuePipeline(buildResolvedIntent(state.intent, res.displayName, res.phoneNumber), null, perceived)
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(state.intent, res.candidates, perceived)
+                val prompt = "I found ${res.candidates.size} contacts named $perceived. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(state.intent.action, prompt)
+                setOverlay("CLARIFICATION", "Which contact?")
+                emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I still couldn't find a contact named $perceived. Say the full name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(state.intent.action, prompt)
+                setOverlay("ERROR", "Contact not found")
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $perceived")))
+            }
+        }
+    }
+
+    private fun buildResolvedIntent(intent: IntentResult, name: String, phone: String): IntentResult {
+        val params = intent.params.toMutableMap()
+        params["contact"] = name
+        params["phone"] = phone
+        if (params.containsKey("recipient")) params["recipient"] = name
+        return intent.copy(params = params)
+    }
+
+    private fun startMessageDraft(intent: IntentResult) {
+        val recipient = intent.params["recipient"] ?: intent.params["contact"] ?: ""
+        pendingDraft = MessageDraftState(
+            recipient = recipient.takeIf { it.isNotBlank() },
+            phone = intent.params["phone"],
+            message = null,
+            channel = intent.params["channel"] ?: "sms",
+            action = intent.action
+        )
+        val prompt = "What should I say to $recipient?"
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        setOverlay("LISTENING", "Awaiting message")
+        emit(PipelineEvent.ClarificationRequired(listOf("Message body")))
+    }
+
+    private fun startRecipientDraft(intent: IntentResult) {
+        pendingDraft = MessageDraftState(
+            recipient = null,
+            phone = null,
+            message = intent.params["message"],
+            channel = intent.params["channel"] ?: "sms",
+            action = intent.action
+        )
+        val prompt = "Who should I send it to?"
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        setOverlay("LISTENING", "Awaiting contact")
+        emit(PipelineEvent.ClarificationRequired(listOf("Recipient")))
+    }
+
+    private suspend fun runMessageDraft(perceived: String) {
+        val draft = pendingDraft ?: return
+        if (draft.recipient == null) {
+            when (val res = contactResolver.resolve(perceived)) {
+                is ContactResolution.Unique -> {
+                    pendingDraft = null
+                    continuePipeline(buildDraftIntent(draft.copy(recipient = res.displayName, phone = res.phoneNumber)), null, perceived)
+                }
+                is ContactResolution.Ambiguous -> {
+                    pendingClarification = ContactClarificationState(buildDraftIntent(draft), res.candidates, perceived)
+                    pendingDraft = null
+                    val prompt = "I found ${res.candidates.size} contacts named $perceived. Which one?"
+                    tts.speak(prompt)
+                    conversationSession.updateLastTurn("SEND_MESSAGE", prompt)
+                    setOverlay("CLARIFICATION", "Which contact?")
+                    emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+                }
+                ContactResolution.NotFound -> {
+                    val prompt = "I couldn't find a contact named $perceived. Try again."
+                    tts.speak(prompt)
+                    conversationSession.updateLastTurn("SEND_MESSAGE", prompt)
+                    setOverlay("ERROR", "Contact not found")
+                    emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $perceived")))
+                }
+            }
+            return
+        }
+        pendingDraft = null
+        continuePipeline(buildDraftIntent(draft.copy(message = perceived)), null, perceived)
+    }
+
+    private fun buildDraftIntent(draft: MessageDraftState): IntentResult {
+        val params = mutableMapOf<String, String>()
+        params["channel"] = draft.channel
+        draft.recipient?.let {
+            params["recipient"] = it
+            params["contact"] = it
+        }
+        draft.phone?.let { params["phone"] = it }
+        draft.message?.let { params["message"] = it }
+        return IntentResult(
+            action = draft.action,
+            params = params,
+            confidence = 0.95f,
+            rawInput = ""
+        )
+    }
+
+    // ─── Communication responses ───────────────────────────────────────
+
+    private fun respondGroupUnsupported(intent: IntentResult) {
+        val group = intent.params["group"] ?: ""
+        val prompt = "I can't send to groups yet. Group messaging support is coming."
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        VoxynLogger.w("COMMUNICATION: group=$group action=MESSAGE_GROUP status=UNSUPPORTED", "ENGINE")
+        setOverlay("ERROR", "Groups not supported")
+        emit(PipelineEvent.PipelineComplete)
+    }
+
+    private fun respondUnsupportedChannel(intent: IntentResult) {
+        val channel = intent.params["channel"] ?: ""
+        val prompt = "I can only send messages through SMS or WhatsApp."
+        tts.speak(prompt)
+        conversationSession.updateLastTurn(intent.action, prompt)
+        VoxynLogger.w("COMMUNICATION: channel=$channel action=SEND_MESSAGE status=UNSUPPORTED_CHANNEL", "ENGINE")
+        setOverlay("ERROR", "Unsupported app")
+        emit(PipelineEvent.PipelineComplete)
+    }
+
+    private suspend fun handleContactLookup(intent: IntentResult) {
+        val name = intent.params["contact"] ?: ""
+        when (val res = contactResolver.resolve(name)) {
+            is ContactResolution.Unique -> {
+                val prompt = "${res.displayName.replaceFirstChar { it.uppercase() }}'s number is ${res.phoneNumber}."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                VoxynLogger.i(
+                    "COMMUNICATION: recipient=${res.displayName} phone=${res.phoneNumber} action=CONTACT_LOOKUP status=SUCCESS",
+                    "ENGINE"
+                )
+            }
+            is ContactResolution.Ambiguous -> {
+                pendingClarification = ContactClarificationState(intent, res.candidates, name)
+                val prompt = "I found ${res.candidates.size} contacts named $name. Which one?"
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                emit(PipelineEvent.ClarificationRequired(res.candidates.map { it.first }))
+            }
+            ContactResolution.NotFound -> {
+                val prompt = "I couldn't find a contact named $name."
+                tts.speak(prompt)
+                conversationSession.updateLastTurn(intent.action, prompt)
+                emit(PipelineEvent.ClarificationRequired(listOf("Contact not found: $name")))
+            }
+        }
+        setOverlay("IDLE")
+        emit(PipelineEvent.PipelineComplete)
     }
 
     // ─── Smart Chain Execution ────────────────────────────────────────
 
-    private suspend fun runChainExecution(stepsJsonStr: String, claudeSpeak: String?) {
+    private suspend fun runChainExecution(action: String, stepsJsonStr: String, claudeSpeak: String?) {
         VoxynLogger.i("Executing Smart Chain sequence: $stepsJsonStr", "ENGINE")
         val stepsList = mutableListOf<String>()
         runCatching {
@@ -306,11 +584,8 @@ class VoxynEngine(
         val plan = ExecutionPlan(chainPlanSteps)
         emit(PipelineEvent.PhaseCompleted(PipelinePhase.PLAN, "Chain plan built (${chainPlanSteps.size} steps)"))
 
-        if (!claudeSpeak.isNullOrEmpty()) {
-            tts.speak(claudeSpeak)
-        }
-
         var cur = plan
+        val executionResults = mutableListOf<Pair<ActionStep, String>>()
         while (!cur.isComplete) {
             val step = cur.currentAction ?: break
             emit(PipelineEvent.ExecutionStepStarted(step))
@@ -329,37 +604,86 @@ class VoxynEngine(
                 return
             }
 
-            emit(PipelineEvent.ExecutionStepCompleted(step, (result as PhaseResult.Success).value))
+            val value = (result as PhaseResult.Success).value
+            executionResults += step to value
+            emit(PipelineEvent.ExecutionStepCompleted(step, value))
             cur = cur.advance()
             delay(500L) // 500ms gap between steps
         }
 
-        val outcome = VerificationOutcome.Success
+        val outcomes = executionResults.map { (step, result) -> executor.verify(step, result) }
+        val outcome = combineVerification(outcomes)
         emit(PipelineEvent.VerificationResult(outcome))
-        setOverlay("SUCCESS", "Chain complete")
-        tts.speakAndAwait("Sequence completed.")
+        val chainResponse = when (outcome) {
+            VerificationOutcome.Success -> "Sequence completed."
+            VerificationOutcome.PartialSuccess -> "Sequence completed, but some steps were only partly verified."
+            VerificationOutcome.Unverified -> "Sequence ran, but I couldn't verify every step."
+            VerificationOutcome.NeedsRollback -> "A step needs to be undone. Please check the device."
+            VerificationOutcome.Failure -> "The sequence ran, but verification failed."
+        }
+        setOverlay(if (outcome == VerificationOutcome.Success) "SUCCESS" else "ERROR", "Chain result")
+        val finalResponse = if (outcome == VerificationOutcome.Success) claudeSpeak ?: chainResponse else chainResponse
+        tts.speak(finalResponse)
+        conversationSession.updateLastTurn(action, finalResponse)
         pendingInput = null
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Chain execution completed successfully", "ENGINE")
 
+        delay(1500L)
         setOverlay("IDLE")
     }
 
     // ─── Recovery ─────────────────────────────────────────────────────
 
-    private suspend fun executeWithRecovery(plan: ExecutionPlan): ExecutionPlan? {
-        phase(PipelinePhase.EXECUTE) { executePlan(plan) }?.let { return it }
+    private suspend fun executeWithRecovery(plan: ExecutionPlan): ExecutionTrace? {
+        val first = executeAttempt(plan)
+        if (first is PhaseResult.Success) return first.value
+        val firstFailure = first as? PhaseResult.Failure ?: return null
+        val retrySafe = plan.steps.size == 1 && plan.steps.all { step ->
+            executor.capabilityRegistry.find(step)?.retrySafe == true
+        }
+        if (!firstFailure.canFallback || !retrySafe) {
+            reportExecutionFailure(firstFailure.error)
+            return null
+        }
         VoxynLogger.w("Attempt 1 failed — retrying", "ENGINE")
-        phase(PipelinePhase.EXECUTE) { executePlan(plan) }?.let { return it }
+        val second = executeAttempt(plan)
+        if (second is PhaseResult.Success) return second.value
+        val lastError = (second as? PhaseResult.Failure)?.error ?: firstFailure.error
         VoxynLogger.w("Both attempts failed", "ENGINE")
-        tts.speak("I couldn't complete that action.")
-        emit(PipelineEvent.ClarificationRequired(listOf("Execution failed")))
-<<<<<<< HEAD
-        setOverlay("ERROR", "Failed")
-=======
-        if (isSessionActive) continueSessionAfterPrompt()
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
+        reportExecutionFailure(lastError)
         return null
+    }
+
+    private fun reportExecutionFailure(error: String) {
+        val reason = error.takeIf { it.isNotBlank() } ?: "I couldn't complete that action."
+        tts.speak(reason)
+        emit(PipelineEvent.ClarificationRequired(listOf(reason)))
+        setOverlay("ERROR", "Failed")
+    }
+
+    private suspend fun executeAttempt(plan: ExecutionPlan): PhaseResult<ExecutionTrace> {
+        emit(PipelineEvent.PhaseStarted(PipelinePhase.EXECUTE))
+        return try {
+            withTimeout(phaseTimeoutMs) { executePlan(plan) }.also { r ->
+                when (r) {
+                    is PhaseResult.Success -> {
+                        emit(PipelineEvent.PhaseCompleted(PipelinePhase.EXECUTE, "${r.value.steps.size} step(s) executed"))
+                    }
+                    is PhaseResult.Failure -> {
+                        emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, r.error, r.canFallback))
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, "Timeout", false))
+            PhaseResult.Failure("That took too long. Try again.", false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, e.message ?: "Error", true))
+            PhaseResult.Failure(e.message ?: "Execution failed", true)
+        }
     }
 
     // ─── Phase runner ─────────────────────────────────────────────────
@@ -389,8 +713,156 @@ class VoxynEngine(
     // ─── Phase implementations ────────────────────────────────────────
 
     private fun perceive(raw: String): PhaseResult<String> {
-        val c = raw.trim().lowercase()
+        VoxynLogger.i("[REQUEST] \"$raw\"", "ENGINE")
+        val c = speechNormalizer.normalize(raw)
         return if (c.isEmpty()) PhaseResult.Failure("Empty input") else PhaseResult.Success(c)
+    }
+
+    // ─── Hybrid conversational handlers ────────────────────────────────
+
+    private fun handleMemorySave(route: RouteDecision) {
+        val note = route.params["note"]
+        if (note.isNullOrBlank()) {
+            unknownResponse()
+            setOverlay("IDLE")
+            return
+        }
+        setOverlay("THINKING", "Remembering...")
+        scope.launch { memory.saveNote(note) }
+        completeConversational("MEMORY_SAVE", "Got it. I'll remember that.")
+    }
+
+    private suspend fun handleMemoryRecall(route: RouteDecision) {
+        val topic = route.params["topic"] ?: ""
+        var notes = memory.recallNotes(topic)
+        if (notes.isEmpty() && topic.isNotBlank()) {
+            val words = topic.split(Regex("[^a-zA-Z0-9]+")).filter { it.length >= 3 }
+            val fallback = words.flatMap { memory.recallNotes(it) }.distinct()
+            if (fallback.isNotEmpty()) {
+                notes = fallback
+            }
+        }
+        if (notes.isEmpty()) {
+            val raw = route.params["raw"] ?: topic
+            if (raw.startsWith("when is", ignoreCase = true) || raw.startsWith("where is", ignoreCase = true)) {
+                handleGeneralQuery(route, raw)
+                return
+            }
+            val speech = if (topic.isBlank()) "I don't remember anything yet." else "I don't have any notes about $topic."
+            completeConversational("MEMORY_RECALL", speech)
+        } else {
+            val speech = "You told me: ${notes.joinToString(" And also: ")}"
+            completeConversational("MEMORY_RECALL", speech)
+        }
+    }
+
+    private suspend fun handleMemoryForget(route: RouteDecision) {
+        val topic = route.params["topic"] ?: ""
+        if (topic.isBlank() || topic == "that" || topic == "it") {
+            val removed = memory.forgetLast()
+            val speech = if (removed) "I've forgotten that." else "I don't have any notes to forget."
+            completeConversational("MEMORY_FORGET", speech)
+        } else {
+            val count = memory.forgetNotes(topic)
+            val speech = if (count > 0) "I've forgotten what you told me about $topic." else "I didn't find any notes about $topic."
+            completeConversational("MEMORY_FORGET", speech)
+        }
+    }
+
+    private suspend fun handleWorldTime(route: RouteDecision) {
+        val city = route.params["city"] ?: return
+        val speech = worldTimeProvider.timeIn(city)
+        if (speech != null) {
+            completeConversational("WORLD_TIME", speech, mapOf("kind" to "time", "location" to city))
+        } else {
+            completeConversational("WORLD_TIME", "I don't know the time zone for $city.")
+        }
+    }
+
+    /**
+     * Single entry point for every non-deterministic route
+     * (WEB_REQUIRED / CONVERSATIONAL / WEATHER / DISTANCE). The hybrid resolver
+     * owns the local → web → cloud decision; here we only speak the result.
+     */
+    private suspend fun handleGeneralQuery(route: RouteDecision, perceived: String) {
+        val query = route.params["query"] ?: perceived
+        setOverlay("THINKING", "Thinking...")
+        VoxynLogger.i("[AI] General query: \"$query\" (${route.type})", "AI")
+        val result = runCatching {
+            withTimeout(60_000L) {
+                generalQuery.resolve(
+                    query = query,
+                    conversationContext = conversationSession.getContext(),
+                    forceWeb = route.type == RouteType.WEB_REQUIRED || route.type == RouteType.CURRENT_INFORMATION
+                )
+            }
+        }.getOrNull()
+        if (result != null) {
+            val params = result.params + buildMap {
+                result.sourceUrl?.let { put("source_url", it) }
+                put("source", result.source)
+                put("retrieved_at", result.retrievedAtEpochMs.toString())
+            }
+            if (result.route == com.voxyn.ai.IntelligenceRoute.WEB) {
+                emit(PipelineEvent.AnswerProvenance(result.source, result.sourceUrl, result.retrievedAtEpochMs))
+            }
+            completeConversational(route.type.name, result.text, params)
+        } else {
+            val fallback = if (route.type == RouteType.WEB_REQUIRED || route.type == RouteType.CURRENT_INFORMATION) {
+                "I couldn't verify that with a current web source just now."
+            } else localKnowledge.cantFind()
+            completeConversational(route.type.name, fallback)
+        }
+    }
+
+    private fun completeConversational(action: String, speech: String, params: Map<String, String> = emptyMap()) {
+        tts.speak(speech)
+        conversationSession.updateLastTurn(action, speech, params)
+        emit(PipelineEvent.PipelineComplete)
+        VoxynLogger.i("✓ Conversational response: \"$speech\"", "ENGINE")
+        setOverlay("IDLE")
+    }
+
+    /**
+     * Natural conversational replies (time, date, greetings, small talk) so
+     * VOXYN feels like a person rather than a command shell.
+     */
+    private fun handleConversational(intent: IntentResult, perceived: String): Boolean {
+        val response: String? = when (intent.action) {
+            "TIME" -> "It's ${SimpleDateFormat("h:mm a", Locale.US).format(Calendar.getInstance().time)}, Sir."
+            "DATE" -> "Today is ${SimpleDateFormat("EEEE, MMMM d", Locale.US).format(Calendar.getInstance().time)}, Sir."
+            "GREETING" -> when {
+                perceived.contains("good morning") -> "Good morning, Sir! How can I help?"
+                perceived.contains("good afternoon") -> "Good afternoon, Sir! What do you need?"
+                perceived.contains("good evening") -> "Good evening, Sir! What do you need?"
+                else -> "Hey, Sir! What do you need?"
+            }
+            "THANKS" -> "Anytime, Sir."
+            "CAPABILITIES" -> "I can open apps, control WiFi, Bluetooth, volume, flashlight, brightness, set timers and alarms, take screenshots, and more, Sir."
+            "SMALLTALK" -> when {
+                perceived.contains("how are you") -> "I'm doing great, Sir. What do you need?"
+                perceived.contains("who are you") -> "I'm VOXYN, your personal assistant, Sir."
+                perceived.contains("your name") -> "I'm VOXYN, Sir."
+                perceived.contains("are you") -> "Always here for you, Sir."
+                perceived.contains("what's that") || perceived.contains("what is that") -> "That's me — VOXYN, Sir."
+                perceived.contains("what's up") || perceived.contains("what is up") -> "Not much, Sir. What do you need?"
+                perceived.contains("good job") || perceived.contains("great") -> "Thanks, Sir! Happy to help."
+                else -> null
+            }
+            else -> null
+        }
+        val resp = response ?: return false
+        val params = when (intent.action) {
+            "TIME" -> mapOf("kind" to "time")
+            "DATE" -> mapOf("kind" to "date")
+            else -> emptyMap()
+        }
+        tts.speak(resp)
+        conversationSession.updateLastTurn(intent.action, resp, params)
+        setOverlay("IDLE")
+        emit(PipelineEvent.PipelineComplete)
+        VoxynLogger.i("✓ Conversational response: \"$resp\"", "ENGINE")
+        return true
     }
 
     private fun resolveIntent(perceived: String): PhaseResult<IntentResult> =
@@ -406,31 +878,95 @@ class VoxynEngine(
 
     private fun decide(intent: IntentResult, confidence: Float, risk: Float): PhaseResult<DecisionState> =
         PhaseResult.Success(when {
+            intent.action in setOf("SET_ALARM", "SET_TIMER") && intent.params.containsKey("needs_clarification") ->
+                DecisionState.AwaitingClarification(listOf(intent.params["needs_clarification"] ?: "time"))
             confidence < 0.25f -> DecisionState.AwaitingClarification(listOf("Low confidence"))
             risk > 0.8f        -> DecisionState.AwaitingConfirmation(intent)
             else               -> DecisionState.Execute
         })
+
+    private suspend fun continueClockClarification(reply: String) {
+        val pending = pendingClockIntent ?: return
+        if (reply.trim().lowercase() in setOf("cancel", "stop", "never mind", "nevermind")) {
+            pendingClockIntent = null
+            tts.speak("Cancelled.")
+            emit(PipelineEvent.EngineInterrupted("Clock action cancelled"))
+            return
+        }
+        val clarification = pending.params["needs_clarification"] ?: "time"
+        val parsed = when (pending.action) {
+            "SET_ALARM" -> when (clarification) {
+                "AM or PM" -> {
+                    val period = reply.trim().lowercase().takeIf { it == "am" || it == "pm" }
+                    val hour = pending.params["hour"]?.toIntOrNull()
+                    val minute = pending.params["minutes"]?.toIntOrNull() ?: 0
+                    if (period == null || hour == null) null
+                    else intentRouter.alarmTimeParams("$hour:%02d $period".format(Locale.US, minute))
+                }
+                else -> intentRouter.alarmTimeParams(reply)
+            }
+            "SET_TIMER" -> if (clarification == "unit") {
+                val amount = pending.params["duration_amount"]
+                if (amount == null) intentRouter.timerDurationParams(reply)
+                else intentRouter.timerDurationParams("$amount $reply")
+            } else intentRouter.timerDurationParams(reply)
+            else -> null
+        }
+        if (parsed == null || parsed.containsKey("needs_clarification")) {
+            val updated = if (parsed != null) pending.copy(params = pending.params + parsed) else pending
+            pendingClockIntent = updated
+            val prompt = when {
+                updated.action == "SET_ALARM" && updated.params["needs_clarification"] == "AM or PM" -> "Is that AM or PM?"
+                updated.action == "SET_TIMER" && updated.params["needs_clarification"] == "unit" -> "Is that seconds, minutes, or hours?"
+                updated.action == "SET_TIMER" -> "How long should I set the timer for?"
+                else -> "What time should I set the alarm for?"
+            }
+            tts.speak(prompt)
+            emit(PipelineEvent.ClarificationRequired(listOf(prompt)))
+            return
+        }
+        pendingClockIntent = null
+        val resolved = pending.copy(params = (pending.params + parsed) - "needs_clarification" - "duration_amount")
+        continuePipeline(resolved, null, reply)
+    }
 
     private fun buildPlan(intent: IntentResult): PhaseResult<ExecutionPlan> =
         PhaseResult.Success(ExecutionPlan(listOf(
             ActionStep("step_0", intent.action, intent.action, intent.params)
         )))
 
-    private suspend fun executePlan(plan: ExecutionPlan): PhaseResult<ExecutionPlan> {
+    private suspend fun executePlan(plan: ExecutionPlan): PhaseResult<ExecutionTrace> {
         var cur = plan
+        val results = mutableListOf<ExecutedStep>()
         while (!cur.isComplete) {
             val step = cur.currentAction ?: break
             emit(PipelineEvent.ExecutionStepStarted(step))
             val result = executor.execute(step)
             if (result is PhaseResult.Failure) return result
-            emit(PipelineEvent.ExecutionStepCompleted(step, (result as PhaseResult.Success).value))
+            val value = (result as PhaseResult.Success).value
+            results += ExecutedStep(step, value)
+            emit(PipelineEvent.ExecutionStepCompleted(step, value))
             cur = cur.advance()
         }
-        return PhaseResult.Success(cur)
+        return PhaseResult.Success(ExecutionTrace(cur, results))
     }
 
-    private fun verify(plan: ExecutionPlan): PhaseResult<VerificationOutcome> =
-        PhaseResult.Success(if (plan.isComplete) VerificationOutcome.Success else VerificationOutcome.PartialSuccess)
+    private suspend fun verify(trace: ExecutionTrace): PhaseResult<VerificationOutcome> {
+        if (!trace.plan.isComplete || trace.steps.size != trace.plan.steps.size) {
+            return PhaseResult.Success(VerificationOutcome.PartialSuccess)
+        }
+        val outcomes = trace.steps.map { executed -> executor.verify(executed.step, executed.result) }
+        return PhaseResult.Success(combineVerification(outcomes))
+    }
+
+    private fun combineVerification(outcomes: List<VerificationOutcome>): VerificationOutcome = when {
+        outcomes.isEmpty() -> VerificationOutcome.Unverified
+        outcomes.any { it == VerificationOutcome.NeedsRollback } -> VerificationOutcome.NeedsRollback
+        outcomes.any { it == VerificationOutcome.Failure } -> VerificationOutcome.Failure
+        outcomes.any { it == VerificationOutcome.PartialSuccess } -> VerificationOutcome.PartialSuccess
+        outcomes.any { it == VerificationOutcome.Unverified } -> VerificationOutcome.Unverified
+        else -> VerificationOutcome.Success
+    }
 
     private suspend fun learn(intent: IntentResult, outcome: VerificationOutcome): PhaseResult<Float> {
         memory.recordOutcome(intent.action, outcome is VerificationOutcome.Success)
@@ -441,7 +977,6 @@ class VoxynEngine(
 
     private fun emit(event: PipelineEvent) { scope.launch { _events.emit(event) } }
 
-<<<<<<< HEAD
     private fun setOverlay(state: String, text: String? = null) {
         // Use singleton directly to avoid startService latency and race conditions
         val overlay = OverlayService.instance
@@ -457,59 +992,6 @@ class VoxynEngine(
                     }
                 )
             } catch (_: Exception) {}
-=======
-    private fun onPipelineEarlyReturn() {
-        if (isSessionActive) {
-            continueSessionAfterPrompt()
-        } else {
-            resumeWakeListening()
-        }
-    }
-
-    private fun shouldKeepSessionActive(action: String): Boolean {
-        return action !in setOf("LOCK_PHONE")
-    }
-
-    private fun playFollowUpPromptChime() {
-        runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 35)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 140)
-            tone.release()
-        }
-    }
-
-    private fun startFollowUpListening() {
-        if (!isSessionActive) return
-        runCatching {
-            appContext.startForegroundService(
-                Intent(appContext, VoiceInputService::class.java).apply {
-                    action = VoiceInputService.ACTION_START_LISTENING
-                    putExtra(VoiceInputService.EXTRA_RESUME_WAKE_AFTER_FINISH, false)
-                    putExtra(VoiceInputService.EXTRA_FOLLOW_UP_MODE, true)
-                    putExtra(VoiceInputService.EXTRA_INITIAL_TIMEOUT_MS, 5_000L)
-                    putExtra(VoiceInputService.EXTRA_SILENCE_COMPLETE_MS, 1_200L)
-                }
-            )
-        }.onFailure {
-            VoxynLogger.e("Failed to start follow-up listening: ${it.message}", tag = "ENGINE")
-            isSessionActive = false
-            resumeWakeListening()
-        }
-    }
-
-    private fun continueSessionAfterPrompt() {
-        isSessionActive = true
-        startFollowUpListening()
-    }
-
-    private fun resumeWakeListening() {
-        runCatching {
-            appContext.startService(Intent(appContext, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_RESUME
-            })
-        }.onFailure {
-            VoxynLogger.e("Failed to resume wake listening: ${it.message}", tag = "ENGINE")
->>>>>>> 2c02828 (WIP: Copilot improvements before sync)
         }
     }
 
@@ -530,51 +1012,137 @@ class VoxynEngine(
         "READ_NOTIFICATIONS"   -> "read notifications"
         "REMEMBER_THIS"        -> "remember this screen"
         "CALL_CONTACT"         -> "make call"
+        "SEND_MESSAGE"         -> "send a message"
+        "SEND_WHATSAPP_MESSAGE" -> "send a WhatsApp message"
+        "MESSAGE_GROUP"        -> "message a group"
+        "CONTACT_LOOKUP"       -> "look up a contact"
+        "TAKE_PHOTO"           -> "take a photo"
+        "RECORD_VIDEO"         -> "record video"
+        "OPEN_CAMERA"          -> "open camera"
         else                   -> action.replace("_", " ").lowercase()
     }
 
     private fun friendlySuccess(action: String, params: Map<String, String>, outcome: VerificationOutcome): String {
-        if (outcome !is VerificationOutcome.Success) return "Done, but something may not have worked."
-        return when (action) {
-            "WIFI_ON"              -> "WiFi is on."
-            "WIFI_OFF"             -> "WiFi is off."
-            "BLUETOOTH_ON"         -> "Bluetooth on."
-            "BLUETOOTH_OFF"        -> "Bluetooth off."
-            "VOLUME_UP"            -> "Volume up."
-            "VOLUME_DOWN"          -> "Volume down."
-            "SILENT_MODE"          -> "Silent mode on."
-            "VIBRATE_MODE"         -> "Vibrate mode on."
-            "NORMAL_MODE"          -> "Ringer on."
-            "FLASHLIGHT_ON"        -> "Flashlight on."
-            "FLASHLIGHT_OFF"       -> "Flashlight off."
-            "SCREENSHOT"           -> "Screenshot taken."
-            "BRIGHTNESS_UP"        -> "Brightness up."
-            "BRIGHTNESS_DOWN"      -> "Brightness down."
-            "BATTERY_SAVER_ON"     -> "Battery saver on."
-            "PLAY_MUSIC"           -> "Playing music."
-            "PAUSE_MUSIC"          -> "Music paused."
-            "NEXT_TRACK"           -> "Next track."
-            "PREV_TRACK"           -> "Previous track."
-            "OPEN_APP"             -> "Opening ${params["app_name"] ?: "app"}."
-            "CALL_CONTACT"         -> "Calling ${params["contact"] ?: "contact"}."
-            "SET_ALARM"            -> "Alarm set."
-            "SET_TIMER"            -> "Timer started."
-            "NAVIGATE"             -> "Opening navigation to ${params["destination"] ?: "destination"}."
-            "LOCK_PHONE"           -> "Locking phone."
-            "MODE_ACTIVATE"        -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} activated."
-            "SEND_CURRENT_MESSAGE" -> "Message sent."
-            "LIKE_CURRENT"         -> "Liked."
-            "SCROLL_DOWN"          -> "Scrolled down."
-            "SCROLL_UP"            -> "Scrolled up."
-            "GO_BACK"              -> "Going back."
-            "GO_HOME"              -> "Going home."
-            "READ_NOTIFICATIONS"   -> "Opening notifications."
-            "REMEMBER_THIS"        -> "Saved to memory."
-            else                   -> "Done."
+        when (outcome) {
+            VerificationOutcome.Unverified -> return "I requested that action, but couldn't verify the result, Sir."
+            VerificationOutcome.PartialSuccess -> return "That action may be partly complete, Sir."
+            VerificationOutcome.Failure -> return "That action did not pass verification, Sir."
+            VerificationOutcome.NeedsRollback -> return "That action needs to be undone. Please check the device, Sir."
+            VerificationOutcome.Success -> Unit
+        }
+        val base = when (action) {
+            "WIFI_ON"              -> "Opening WiFi settings"
+            "WIFI_OFF"             -> "Opening WiFi settings"
+            "FLASHLIGHT_ON"        -> "Flashlight on"
+            "FLASHLIGHT_OFF"       -> "Light's out"
+            "VOLUME_UP"            -> "Turned it up"
+            "VOLUME_DOWN"          -> "Turned it down"
+            "SET_VOLUME"            -> "Volume set"
+            "SILENT_MODE"          -> "Going silent"
+            "VIBRATE_MODE"         -> "Vibrate on"
+            "NORMAL_MODE"          -> "Ringer on"
+            "BLUETOOTH_ON"         -> "Opening Bluetooth settings"
+            "BLUETOOTH_OFF"        -> "Opening Bluetooth settings"
+            "BATTERY_SAVER_ON"     -> "Battery saver on"
+            "OPEN_APP"             -> "Opening ${params["app_name"] ?: "app"}"
+            "CLOSE_APP"            -> "Closed ${params["app_name"] ?: "app"}"
+            "DISMISS_ALARM"        -> "Alarm turned off"
+            "SNOOZE_ALARM"         -> "Alarm snoozed"
+            "SHOW_ALARMS"          -> "Alarms opened"
+            "DISMISS_TIMER"        -> "Timer stopped"
+            "SHOW_TIMERS"          -> "Timers opened"
+            "RECENTS"              -> "Recent apps opened"
+            "QUICK_SETTINGS"       -> "Quick settings opened"
+            "SPLIT_SCREEN"         -> "Split screen toggled"
+            "CLICK_ELEMENT"        -> "Clicked ${params["target"] ?: "item"}"
+            "VOLUME_MAX"           -> "Volume set to maximum"
+            "VOLUME_MIN"           -> "Volume set to minimum"
+            "MUTE"                 -> "Volume muted"
+            "OPEN_SETTINGS"        -> "Settings opened"
+            "OPEN_WIFI_SETTINGS"   -> "WiFi settings opened"
+            "OPEN_BLUETOOTH_SETTINGS" -> "Bluetooth settings opened"
+            "CALL_CONTACT"         -> "Calling ${params["contact"] ?: "contact"} now"
+            "SET_ALARM"            -> "Alarm set"
+            "SET_TIMER"            -> "Timer's running"
+            "NAVIGATE"             -> "Navigation started"
+            "SCREENSHOT"           -> "Got it"
+            "PLAY_MUSIC"           -> "Playing"
+            "PAUSE_MUSIC"          -> "Paused"
+            "NEXT_TRACK"           -> "Next track"
+            "PREV_TRACK"           -> "Previous track"
+            "BRIGHTNESS_UP"        -> "Brighter"
+            "BRIGHTNESS_DOWN"      -> "Dimmed"
+            "LOCK_PHONE"           -> "Locking"
+            "MODE_ACTIVATE"        -> "${params["mode_name"]?.replaceFirstChar { it.uppercase() } ?: "Mode"} mode activated"
+            "SEND_MESSAGE"         -> "Opening message draft to ${params["recipient"] ?: "contact"}"
+            "SEND_WHATSAPP_MESSAGE" -> "Opened WhatsApp to ${params["recipient"] ?: "contact"}"
+            "MESSAGE_GROUP"        -> "Done"
+            "CONTACT_LOOKUP"       -> "Here's the contact"
+            "SEND_CURRENT_MESSAGE" -> "Message sent"
+            "LIKE_CURRENT"         -> "Liked"
+            "SCROLL_DOWN"          -> "Scrolled down"
+            "SCROLL_UP"            -> "Scrolled up"
+            "GO_BACK"              -> "Going back"
+            "GO_HOME"              -> "Going home"
+            "READ_NOTIFICATIONS"   -> "Opening notifications"
+            "REMEMBER_THIS"        -> "Saved to memory"
+            "TAKE_PHOTO"           -> "Opening Camera to take photo"
+            "RECORD_VIDEO"         -> "Opening Camera to record video"
+            "OPEN_CAMERA"          -> "Opening Camera"
+            else                   -> "Done"
+        }
+        return "$base, Sir."
+    }
+
+    private fun confirmActionPhrase(intent: IntentResult): String {
+        val recipient = intent.params["recipient"] ?: intent.params["contact"]
+        return when (intent.action) {
+            "CALL_CONTACT" -> "call ${recipient ?: "that contact"}"
+            "SEND_MESSAGE" -> "message ${recipient ?: "them"}"
+            "SEND_WHATSAPP_MESSAGE" -> "message ${recipient ?: "them"} on WhatsApp"
+            else -> friendlyAction(intent.action)
         }
     }
 
+    private fun isYesVariant(input: String): Boolean =
+        input.trim().trimEnd('.', '!', '?').lowercase() in YES_VARIANTS
+
+    private fun isNoVariant(input: String): Boolean =
+        input.trim().trimEnd('.', '!', '?').lowercase() in NO_VARIANTS
+
+    private fun acknowledge() {
+        tts.speak(ACKNOWLEDGEMENTS.random())
+    }
+
+    private fun unknownResponse(): String {
+        val phrase = UNKNOWN_RESPONSES.random()
+        tts.speak(phrase)
+        return phrase
+    }
+
     companion object {
-        private val HIGH_RISK = setOf("SEND_MESSAGE", "CALL_CONTACT", "DELETE_FILE", "FACTORY_RESET")
+        private val HIGH_RISK = setOf(
+            "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE", "CALL_CONTACT",
+            "DELETE_FILE", "FACTORY_RESET"
+        )
+        private val CONTACT_INTENTS = setOf("CALL_CONTACT", "SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE")
+        private val SEND_INTENTS = setOf("SEND_MESSAGE", "SEND_WHATSAPP_MESSAGE")
+        private val YES_VARIANTS = setOf(
+            "yes", "yeah", "yep", "yup", "sure", "okay", "ok", "okie",
+            "go ahead", "do it", "go ahead and do it"
+        )
+        private val NO_VARIANTS = setOf(
+            "no", "nope", "nah", "cancel", "stop",
+            "never mind", "nevermind", "don't", "dont",
+            "don't do it", "dont do it"
+        )
+        private val ACKNOWLEDGEMENTS = listOf(
+            "On it, Sir.", "Give me a sec, Sir.", "Right away, Sir.", "Let me handle that, Sir.", "Sure thing, Sir."
+        )
+        private val UNKNOWN_RESPONSES = listOf(
+            "Didn't catch that, Sir. Try again?",
+            "Not sure what you mean, Sir. Say it differently?",
+            "I missed that, Sir. What do you need?"
+        )
     }
 }
