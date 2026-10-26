@@ -19,7 +19,7 @@ import com.voxyn.voice.VoiceInputService
 import kotlin.math.abs
 
 enum class IslandState {
-    IDLE, LISTENING, PROCESSING, SPEAKING, CONFIRMATION, SUCCESS, ERROR
+    STOPPED, IDLE, LISTENING, PROCESSING, SPEAKING, RECOVERING, CONFIRMATION, SUCCESS, ERROR
 }
 
 class DynamicIsland(
@@ -58,35 +58,29 @@ class DynamicIsland(
         color = Color.parseColor("#00E5FF")
         textAlign = Paint.Align.LEFT
     }
-    private val spinnerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2.5f * density
-        strokeCap = Paint.Cap.ROUND
-        color = Color.parseColor("#FFAB00")
+    private val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val avatarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val voiceGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        maskFilter = android.graphics.BlurMaskFilter(8f * density, android.graphics.BlurMaskFilter.Blur.NORMAL)
     }
 
     // Animation state
     private var spinnerAngle   = 0f
-    private var pulseOffset    = 0f
-    private var pulseGrowing   = true
+    private var audioLevel = 0f
+    private var lastAudioLevelAtMs = 0L
     private var widthAnimator  : ValueAnimator? = null
     private val handler        = Handler(Looper.getMainLooper())
-
-    private val pulseRunnable = object : Runnable {
-        override fun run() {
-            if (currentState != IslandState.LISTENING) return
-            pulseOffset = if (pulseGrowing) (pulseOffset + 0.3f).coerceAtMost(3f)
-                          else (pulseOffset - 0.3f).coerceAtLeast(0f)
-            if (pulseOffset >= 3f) pulseGrowing = false
-            if (pulseOffset <= 0f) pulseGrowing = true
-            invalidate()
-            handler.postDelayed(this, 50)
-        }
-    }
+    private val animationsAllowed: Boolean
+        get() = android.provider.Settings.Global.getFloat(
+            context.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f
+        ) > 0f
 
     private val spinnerRunnable = object : Runnable {
         override fun run() {
             if (currentState != IslandState.PROCESSING) return
+            if (!isShown || !animationsAllowed) return
             spinnerAngle = (spinnerAngle + 14f) % 360f
             invalidate()
             handler.postDelayed(this, 28)
@@ -111,18 +105,28 @@ class DynamicIsland(
         setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
+    override fun onDetachedFromWindow() {
+        handler.removeCallbacks(spinnerRunnable)
+        super.onDetachedFromWindow()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (currentState == IslandState.PROCESSING && animationsAllowed) handler.post(spinnerRunnable)
+    }
+
     // ─── Public API ───────────────────────────────────────────────────
 
     fun updateState(state: IslandState, text: String? = null) {
         // Must be called on main thread
         handler.post {
             currentState = state
-            handler.removeCallbacks(pulseRunnable)
             handler.removeCallbacks(spinnerRunnable)
             handler.removeCallbacks(longPressRunnable)
 
             when (state) {
-                IslandState.IDLE -> {
+                IslandState.STOPPED, IslandState.IDLE -> {
+                    audioLevel = 0f
                     statusText = "VOXYN"
                     textPaint.color = Color.parseColor("#00E5FF")
                     dotPaint.color  = Color.parseColor("#00E676")
@@ -131,18 +135,17 @@ class DynamicIsland(
                     animateWidth(120 * density)
                 }
                 IslandState.LISTENING -> {
+                    audioLevel = 0f
                     statusText = text ?: "Listening..."
                     textPaint.color = Color.WHITE
                     dotPaint.color  = Color.parseColor("#00E5FF")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#5500E5FF")
                     animateWidth(200 * density)
-                    handler.post(pulseRunnable)
                 }
                 IslandState.PROCESSING -> {
                     statusText = text ?: "Thinking..."
                     textPaint.color = Color.parseColor("#FFAB00")
-                    spinnerPaint.color = Color.parseColor("#FFAB00")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#33FFAB00")
                     animateWidth(180 * density)
@@ -154,8 +157,16 @@ class DynamicIsland(
                     textPaint.color = Color.parseColor("#00E5FF")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#3300E5FF")
-                    val w = textPaint.measureText(statusText) + 48 * density
+                    val w = textPaint.measureText(statusText) + 64 * density
                     animateWidth(w.coerceIn(160 * density, screenWidth() * 0.82f))
+                }
+                IslandState.RECOVERING -> {
+                    statusText = text ?: "Reconnecting..."
+                    textPaint.color = Color.parseColor("#FFAB00")
+                    dotPaint.color = Color.parseColor("#FFAB00")
+                    bgPaint.color = Color.parseColor("#F2000000")
+                    borderPaint.color = Color.parseColor("#33FFAB00")
+                    animateWidth(190 * density)
                 }
                 IslandState.CONFIRMATION -> {
                     statusText = text ?: "Confirm action?"
@@ -192,6 +203,19 @@ class DynamicIsland(
             }
             invalidate()
         }
+    }
+
+    /** Called only with levels reported by Android's active SpeechRecognizer. */
+    fun updateAudioLevel(rmsDb: Float) {
+        if (currentState != IslandState.LISTENING) return
+        val target = ((rmsDb + 55f) / 40f).coerceIn(0f, 1f)
+        val now = android.os.SystemClock.uptimeMillis()
+        val elapsed = if (lastAudioLevelAtMs == 0L) 32L else (now - lastAudioLevelAtMs).coerceIn(1L, 250L)
+        lastAudioLevelAtMs = now
+        val timeConstantMs = if (target > audioLevel) 60f else 280f
+        val smoothing = 1f - kotlin.math.exp(-elapsed / timeConstantMs)
+        audioLevel += (target - audioLevel) * smoothing
+        invalidate()
     }
 
     // ─── Width animation — updates WindowManager LayoutParams ──────────
@@ -234,7 +258,7 @@ class DynamicIsland(
         val textY = cy - (textPaint.ascent() + textPaint.descent()) / 2f
 
         when (currentState) {
-            IslandState.IDLE -> {
+            IslandState.STOPPED, IslandState.IDLE -> {
                 // Green dot + "VOXYN"
                 val dotR  = 4f * density
                 val dotCx = cornerRadiusPx
@@ -244,24 +268,45 @@ class DynamicIsland(
 
             IslandState.LISTENING -> {
                 // Pulsing dot + text
-                val dotR  = 4f * density + pulseOffset
+                val dotR  = 4f * density + audioLevel * 4f * density
                 val dotCx = cornerRadiusPx
+                if (audioLevel > 0.04f) {
+                    voiceGlowPaint.color = Color.argb((audioLevel * 72).toInt(), 0, 229, 255)
+                    canvas.drawCircle(dotCx, cy, dotR + 2f * density, voiceGlowPaint)
+                }
                 canvas.drawCircle(dotCx, cy, dotR, dotPaint)
                 canvas.drawText(statusText, dotCx + 4f * density + dotR + 4 * density, textY, textPaint)
             }
 
             IslandState.PROCESSING -> {
-                // Spinning arc + "Thinking..."
-                val spinR  = 9f * density
-                val spinCx = cornerRadiusPx + spinR
-                val spinRect = RectF(spinCx - spinR, cy - spinR, spinCx + spinR, cy + spinR)
-                canvas.drawArc(spinRect, spinnerAngle, 250f, false, spinnerPaint)
-                canvas.drawText(statusText, spinCx + spinR + 6 * density, textY, textPaint)
+                // Compact native Thinking Orb: one core and three orbiting particles.
+                val centerX = 19f * density
+                val orbitR = 6f * density
+                val baseAngle = Math.toRadians(spinnerAngle.toDouble())
+                val particleColors = intArrayOf(
+                    Color.parseColor("#FFAB00"),
+                    Color.parseColor("#FFE082"),
+                    Color.parseColor("#FFF3CD")
+                )
+                for (i in 0..2) {
+                    val angle = baseAngle + i * (Math.PI * 2.0 / 3.0)
+                    val x = centerX + kotlin.math.cos(angle).toFloat() * orbitR
+                    val y = cy + kotlin.math.sin(angle).toFloat() * orbitR
+                    orbPaint.color = particleColors[i]
+                    canvas.drawCircle(x, y, (1.4f + if (i == 0) 0.35f else 0f) * density, orbPaint)
+                }
+                orbPaint.color = Color.parseColor("#FFFFD180")
+                canvas.drawCircle(centerX, cy, 2.1f * density, orbPaint)
+                canvas.drawText(statusText, 34f * density, textY, textPaint)
             }
 
-            IslandState.SPEAKING,
+            IslandState.SPEAKING -> {
+                drawBotAvatar(canvas, 21f * density, cy)
+                canvas.drawText(statusText, 40f * density, textY, textPaint)
+            }
+
+            IslandState.RECOVERING,
             IslandState.CONFIRMATION -> {
-                // Centered text with padding
                 val tx = cornerRadiusPx
                 canvas.drawText(statusText, tx, textY, textPaint)
             }
@@ -274,6 +319,25 @@ class DynamicIsland(
                 canvas.drawText(statusText, tx, textY, textPaint)
             }
         }
+    }
+
+    /** A small native bot mark used only while the pipeline reports SPEAKING. */
+    private fun drawBotAvatar(canvas: Canvas, cx: Float, cy: Float) {
+        avatarPaint.color = Color.parseColor("#00B8D4")
+        canvas.drawRoundRect(
+            RectF(cx - 6f * density, cy - 6f * density, cx + 6f * density, cy + 5f * density),
+            4f * density, 4f * density, avatarPaint
+        )
+        avatarPaint.color = Color.parseColor("#B2EBF2")
+        canvas.drawCircle(cx - 2.2f * density, cy - 0.4f * density, 1f * density, avatarPaint)
+        canvas.drawCircle(cx + 2.2f * density, cy - 0.4f * density, 1f * density, avatarPaint)
+        avatarPaint.color = Color.parseColor("#00B8D4")
+        canvas.drawRect(cx - 0.45f * density, cy - 8f * density, cx + 0.45f * density, cy - 5.5f * density, avatarPaint)
+        canvas.drawCircle(cx, cy - 8f * density, 1f * density, avatarPaint)
+        canvas.drawRoundRect(
+            RectF(cx - 4f * density, cy + 5.5f * density, cx + 4f * density, cy + 8f * density),
+            1.2f * density, 1.2f * density, avatarPaint
+        )
     }
 
     // ─── Touch ────────────────────────────────────────────────────────

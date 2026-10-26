@@ -113,6 +113,10 @@ class SherpaParakeetRecognizer(
             val now = SystemClock.elapsedRealtime()
 
             val samples = FloatArray(read) { buffer[it] / 32768.0f }
+            var energy = 0.0
+            for (sample in samples) energy += sample * sample
+            val rms = kotlin.math.sqrt(energy / read)
+            listener?.onAudioLevel(if (rms > 0.0) (20.0 * kotlin.math.log10(rms)).toFloat() else -90f)
             vadEngine.acceptWaveform(samples)
 
             if (vadEngine.isSpeechDetected() && !speechNotified) {

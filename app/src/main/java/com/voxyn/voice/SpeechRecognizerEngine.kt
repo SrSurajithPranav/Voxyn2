@@ -32,6 +32,9 @@ interface SpeechRecognizerEngine {
         /** Partial/streaming transcript, when the engine can provide one. */
         fun onPartial(text: String)
 
+        /** Current PCM level in dBFS from the active microphone capture. */
+        fun onAudioLevel(rmsDb: Float) = Unit
+
         /** A complete spoken command, with optional audio samples for speaker verification. */
         fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray? = null)
 

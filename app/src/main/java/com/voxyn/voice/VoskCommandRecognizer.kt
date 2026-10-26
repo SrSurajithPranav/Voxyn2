@@ -136,6 +136,14 @@ class VoskCommandRecognizer(
             if (read <= 0) continue
             val now = System.currentTimeMillis()
 
+            var energy = 0.0
+            for (i in 0 until read) {
+                val sample = buffer[i] / 32768.0
+                energy += sample * sample
+            }
+            val rms = kotlin.math.sqrt(energy / read)
+            listener?.onAudioLevel(if (rms > 0.0) (20.0 * kotlin.math.log10(rms)).toFloat() else -90f)
+
             if (capturedAudio.size < 160_000) {
                 for (i in 0 until read) {
                     capturedAudio.add(buffer[i])

@@ -20,6 +20,7 @@ import android.os.Looper
 import com.voxyn.MainActivity
 import com.voxyn.core.VoxynConstants
 import com.voxyn.engine.VoxynEngine
+import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +106,7 @@ class VoiceInputService : Service() {
             micPausedForCall = shouldPause
             if (shouldPause) {
                 VoxynLogger.i("Call detected — pausing microphone", "VOICE")
+                OverlayService.instance?.setState("RECOVERING", "Microphone paused for call")
                 stopListeningInternal()
             } else {
                 VoxynLogger.i("Call ended — resuming microphone", "VOICE")
@@ -122,6 +124,7 @@ class VoiceInputService : Service() {
             ACTION_STOP_LISTENING -> {
                 stopping = true
                 stopListeningInternal()
+                OverlayService.instance?.setState("STOPPED")
                 stopSelf()
             }
             else -> {
@@ -182,14 +185,17 @@ class VoiceInputService : Service() {
                     isListening = false
                     activeEngine = null
                     releaseAudioFocus()
+                    OverlayService.instance?.setState("RECOVERING", "Restarting voice input")
                     updateNotification("VOXYN — voice engine unavailable")
                     mainHandler.postDelayed({ if (!stopping) beginListening() }, 3_000L)
                 }
                 return
             }
+            OverlayService.instance?.setState("LISTENING")
             VoxynLogger.i("Command listening started via fallback (${fallbackEngine::class.simpleName})", "VOICE")
             return
         }
+        OverlayService.instance?.setState("LISTENING")
         coordinator.onListeningStarted(currentSessionId, recognizerEngine::class.simpleName ?: "Engine")
 
         // Phase 1: Attach hardware audio effects to the active audio session.
@@ -212,6 +218,10 @@ class VoiceInputService : Service() {
 
         override fun onPartial(text: String) {
             // Keep completely silent & invisible: do not reveal or change notification until verified owner
+        }
+
+        override fun onAudioLevel(rmsDb: Float) {
+            OverlayService.instance?.setMicrophoneLevel(rmsDb)
         }
 
         override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray?) {
@@ -266,6 +276,7 @@ class VoiceInputService : Service() {
                     activeEngine = fallback
                     VoxynLogger.i("Attempting in-session fallback to VoskCommandRecognizer after error: $message", "VOICE")
                     if (fallback.start(listenerInstance)) {
+                        OverlayService.instance?.setState("RECOVERING", "Switching voice engine")
                         return@post
                     }
                 }
@@ -297,6 +308,7 @@ class VoiceInputService : Service() {
         activeEngine?.stop()
         activeEngine = null
         releaseAudioFocus()
+        OverlayService.instance?.setState("PROCESSING")
         consecutiveFailures = 0
         updateNotification("Processing: \"$text\"...")
 
@@ -333,6 +345,7 @@ class VoiceInputService : Service() {
         activeEngine = null
         releaseAudioEffects()
         releaseAudioFocus()
+        OverlayService.instance?.setState("RECOVERING", "Listening again")
         mainHandler.postDelayed({ if (!stopping) beginListening() }, VoxynConstants.SILENCE_REARM_DELAY_MS)
     }
 

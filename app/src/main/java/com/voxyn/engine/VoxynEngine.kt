@@ -115,7 +115,8 @@ class VoxynEngine(
         emit(PipelineEvent.PhaseStarted(PipelinePhase.INPUT))
         emit(PipelineEvent.PhaseCompleted(PipelinePhase.INPUT, raw))
 
-        setOverlay("LISTENING")
+        // SpeechRecognizer has already handed the microphone to the pipeline.
+        setOverlay("PROCESSING")
 
         val perceived = phase(PipelinePhase.PERCEPTION) { perceive(raw) } ?: return
         setOverlay("THINKING")

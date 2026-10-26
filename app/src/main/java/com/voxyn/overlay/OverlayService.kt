@@ -157,9 +157,14 @@ class OverlayService : Service() {
         handler.post { applyState(stateStr, textStr) }
     }
 
+    fun setMicrophoneLevel(rmsDb: Float) {
+        handler.post { dynamicIsland?.updateAudioLevel(rmsDb) }
+    }
+
     private fun applyState(stateStr: String, textStr: String?) {
         val island = dynamicIsland ?: return
         val state = when (stateStr.uppercase()) {
+            "STOPPED"     -> IslandState.STOPPED
             "LISTENING"    -> IslandState.LISTENING
             "PROCESSING",
             "THINKING"     -> IslandState.PROCESSING
@@ -168,6 +173,7 @@ class OverlayService : Service() {
             "CONFIRMATION" -> IslandState.CONFIRMATION
             "SUCCESS"      -> IslandState.SUCCESS
             "ERROR"        -> IslandState.ERROR
+            "RECOVERING"   -> IslandState.RECOVERING
             else           -> IslandState.IDLE
         }
         island.updateState(state, textStr)
