@@ -6,7 +6,9 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.overlay.OverlayService
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -154,7 +156,10 @@ class TextToSpeechManager(context: Context) {
     private fun setupProgressListener() {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                if (utteranceId == activeUtteranceId.get()) isCurrentlySpeaking.set(true)
+                if (utteranceId == activeUtteranceId.get()) {
+                    isCurrentlySpeaking.set(true)
+                    OverlayService.instance?.setSpeechActive(true)
+                }
                 VoxynLogger.d("TTS started: $utteranceId", "TTS")
             }
 
@@ -162,6 +167,7 @@ class TextToSpeechManager(context: Context) {
                 if (utteranceId != activeUtteranceId.get()) return
                 activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
+                OverlayService.instance?.setSpeechActive(false)
                 VoxynLogger.d("TTS completed: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
@@ -174,6 +180,7 @@ class TextToSpeechManager(context: Context) {
                 if (utteranceId != activeUtteranceId.get()) return
                 activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
+                OverlayService.instance?.setSpeechActive(false)
                 VoxynLogger.w("TTS error on: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
@@ -185,6 +192,7 @@ class TextToSpeechManager(context: Context) {
                 if (utteranceId != activeUtteranceId.get()) return
                 activeUtteranceId.set(null)
                 isCurrentlySpeaking.set(false)
+                OverlayService.instance?.setSpeechActive(false)
                 VoxynLogger.w("TTS error ($errorCode) on: $utteranceId", "TTS")
                 if (utteranceId != null) {
                     val cb = callbacks.remove(utteranceId)
@@ -212,7 +220,14 @@ class TextToSpeechManager(context: Context) {
         if (text.isBlank()) return
         val deferred = CompletableDeferred<Unit>()
         speak(text) { deferred.complete(Unit) }
-        deferred.await()
+        val completed = withTimeoutOrNull(SPEECH_COMPLETION_TIMEOUT_MS) {
+            deferred.await()
+            true
+        } == true
+        if (!completed) {
+            VoxynLogger.w("TTS completion timed out; stopping the active utterance", "TTS")
+            stop()
+        }
     }
 
     private fun speakNow(text: String, onComplete: (() -> Unit)?) {
@@ -221,6 +236,7 @@ class TextToSpeechManager(context: Context) {
         tts?.stop()
         activeUtteranceId.set(null)
         isCurrentlySpeaking.set(false)
+        OverlayService.instance?.setSpeechActive(false)
         completeCallbacks()
         val utteranceId = "voxyn_${utteranceSequence.incrementAndGet()}"
         activeUtteranceId.set(utteranceId)
@@ -259,6 +275,7 @@ class TextToSpeechManager(context: Context) {
         completeCallbacks()
         activeUtteranceId.set(null)
         isCurrentlySpeaking.set(false)
+        OverlayService.instance?.setSpeechActive(false)
         tts?.stop()
     }
 
@@ -275,5 +292,9 @@ class TextToSpeechManager(context: Context) {
         val pending = callbacks.values.toList()
         callbacks.clear()
         pending.forEach { callback -> mainHandler.post(callback) }
+    }
+
+    private companion object {
+        const val SPEECH_COMPLETION_TIMEOUT_MS = 30_000L
     }
 }

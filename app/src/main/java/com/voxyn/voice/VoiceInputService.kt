@@ -21,6 +21,7 @@ import com.voxyn.MainActivity
 import com.voxyn.core.VoxynConstants
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.overlay.OverlayService
+import com.voxyn.overlay.IslandSurfaceStore
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,7 @@ class VoiceInputService : Service() {
     private val coordinator: VoiceSessionCoordinator by inject()
     private val diagnostics: VoiceDiagnosticsManager by inject()
     private val speakerProfileRepository: com.voxyn.security.SpeakerProfileRepository by inject()
+    private val islandSurfaceStore: IslandSurfaceStore by inject()
 
     private var activeEngine      : SpeechRecognizerEngine? = null
     private var audioManager      : AudioManager? = null
@@ -240,6 +242,7 @@ class VoiceInputService : Service() {
                 }
 
                 if (isAuthorized) {
+                    islandSurfaceStore.setVerifiedTranscript(text)
                     handleResult(text)
                 } else {
                     VoxynLogger.w("Voice command rejected or unverified speaker — silently dropping (no sound, no display)", "VOICE")

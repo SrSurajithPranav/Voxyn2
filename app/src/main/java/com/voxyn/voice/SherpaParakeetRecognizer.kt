@@ -85,6 +85,9 @@ class SherpaParakeetRecognizer(
         listener = null
     }
 
+    /** Audio session for optional effects managed by the owning voice service. */
+    fun getAudioSessionId(): Int = audioRecord?.audioSessionId ?: -1
+
     private suspend fun CoroutineScope.captureAndRecognize(recognizer: OfflineRecognizer) {
         val vadEngine = createVad() ?: run {
             listener?.onError("VAD init failed")

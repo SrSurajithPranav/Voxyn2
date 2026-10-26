@@ -309,7 +309,7 @@ class VoxynEngine(
             friendlySuccess(intent.action, intent.params, outcome)
         }
         setOverlay("SPEAKING", speech)
-        tts.speak(speech)
+        tts.speakAndWait(speech)
         conversationSession.updateLastTurn(intent.action, speech)
 
         phase(PipelinePhase.LEARN) { learn(intent, outcome) }
@@ -318,7 +318,6 @@ class VoxynEngine(
         emit(PipelineEvent.PipelineComplete)
         VoxynLogger.i("✓ Pipeline complete", "ENGINE")
 
-        delay(1500L)
         setOverlay("IDLE")
     }
 
@@ -593,7 +592,8 @@ class VoxynEngine(
 
             val friendly = friendlyAction(step.actionType)
             setOverlay("SPEAKING", friendly)
-            tts.speak(friendly)
+            tts.speakAndWait(friendly)
+            setOverlay("EXECUTING", friendly)
 
             val result = executor.execute(step)
             if (result is PhaseResult.Failure) {
@@ -624,7 +624,9 @@ class VoxynEngine(
         }
         setOverlay(if (outcome == VerificationOutcome.Success) "SUCCESS" else "ERROR", "Chain result")
         val finalResponse = if (outcome == VerificationOutcome.Success) claudeSpeak ?: chainResponse else chainResponse
-        tts.speak(finalResponse)
+        setOverlay("SPEAKING", finalResponse)
+        tts.speakAndWait(finalResponse)
+        setOverlay(if (outcome == VerificationOutcome.Success) "SUCCESS" else "ERROR", "Chain result")
         conversationSession.updateLastTurn(action, finalResponse)
         pendingInput = null
         emit(PipelineEvent.PipelineComplete)

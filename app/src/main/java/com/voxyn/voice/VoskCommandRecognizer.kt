@@ -102,6 +102,9 @@ class VoskCommandRecognizer(
         listener = null
     }
 
+    /** Audio session for optional effects managed by the owning voice service. */
+    fun getAudioSessionId(): Int = audioRecord?.audioSessionId ?: -1
+
     private suspend fun CoroutineScope.captureAndRecognize(model: org.vosk.Model) {
         val record = createAudioRecord() ?: run {
             listener?.onError("AudioRecord init failed")

@@ -30,6 +30,9 @@ import com.voxyn.execution.capabilities.SystemCapability
 import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
+import com.voxyn.overlay.IslandSurfaceStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.preferencesDataStoreFile
 import com.voxyn.perception.AppNameResolver
 import com.voxyn.perception.ContextEngine
 import com.voxyn.perception.SpeechNormalizer
@@ -61,6 +64,8 @@ val appModule = module {
 
     // ─── Foundation ─────────────────────────────────────────────────────────────
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    single { PreferenceDataStoreFactory.create(scope = get(), produceFile = { androidContext().preferencesDataStoreFile("voxyn_island") }) }
+    single { IslandSurfaceStore(get(), get()) }
     single { MemoryRepository(androidContext()) }
     single { ContextEngine(androidContext()) }
 

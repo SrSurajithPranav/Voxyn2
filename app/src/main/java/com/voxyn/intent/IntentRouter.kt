@@ -270,6 +270,14 @@ class IntentRouter {
         )),
 
         // ─── Alarm & Timer ─────────────────────────────────────────────
+        IntentDef("SHOW_TIMERS", 0.92f, listOf(
+            Regex("(show|open|view)\\s*(my\\s*)?timers?", RegexOption.IGNORE_CASE),
+            Regex("timers?\\s*(list|status)", RegexOption.IGNORE_CASE)
+        )),
+        IntentDef("SHOW_ALARMS", 0.92f, listOf(
+            Regex("(show|open|view)\\s*(my\\s*)?alarms?", RegexOption.IGNORE_CASE),
+            Regex("alarms?\\s*(list|status)", RegexOption.IGNORE_CASE)
+        )),
         IntentDef("SET_ALARM", 0.92f, listOf(
             Regex("set\\s*(an?\\s*)?alarm", RegexOption.IGNORE_CASE),
             Regex("wake\\s*me\\s*(up)?", RegexOption.IGNORE_CASE),

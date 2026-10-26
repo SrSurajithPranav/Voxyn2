@@ -8,6 +8,11 @@ import android.app.Service
 import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -16,9 +21,16 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.WindowManager
 import com.voxyn.MainActivity
+import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
+import org.koin.android.ext.android.inject
 
 class OverlayService : Service() {
+
+    private val surfaceStore: IslandSurfaceStore by inject()
+    private val engine: VoxynEngine by inject()
+    private var batteryReceiver: BroadcastReceiver? = null
+    private var audioDeviceCallback: AudioDeviceCallback? = null
 
     companion object {
         const val CHANNEL_ID = "voxyn_overlay"
@@ -48,6 +60,7 @@ class OverlayService : Service() {
             startForeground(NOTIF_ID, buildNotification())
         }
         VoxynLogger.i("OverlayService created", "OVERLAY")
+        registerDeviceEvents()
 
         // Post island creation to main thread to ensure it runs after startForeground
         handler.post {
@@ -77,6 +90,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         instance = null
+        unregisterDeviceEvents()
         removeDynamicIsland()
         super.onDestroy()
     }
@@ -109,14 +123,18 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 y = topMarginPx
             }
 
-            val island = DynamicIsland(this, windowManager, layoutParams!!)
+            val island = DynamicIsland(this, windowManager, layoutParams!!, surfaceStore) { command ->
+                if (!engine.isProcessing()) engine.process(command)
+                else VoxynLogger.w("Island shortcut ignored while the voice pipeline is busy", "OVERLAY")
+            }
             dynamicIsland = island
 
             windowManager.addView(island, layoutParams)
@@ -150,6 +168,19 @@ class OverlayService : Service() {
     // ─── State ────────────────────────────────────────────────────────
 
     fun setState(stateStr: String, textStr: String? = null) {
+        val state = when (stateStr.uppercase()) {
+            "STOPPED" -> IslandState.STOPPED
+            "LISTENING" -> IslandState.LISTENING
+            "PROCESSING", "THINKING" -> IslandState.PROCESSING
+            "EXECUTING" -> IslandState.EXECUTING
+            "SPEAKING" -> IslandState.SPEAKING
+            "CONFIRMATION" -> IslandState.CONFIRMATION
+            "SUCCESS" -> IslandState.SUCCESS
+            "ERROR" -> IslandState.ERROR
+            "RECOVERING" -> IslandState.RECOVERING
+            else -> IslandState.IDLE
+        }
+        surfaceStore.setVoiceState(state, textStr)
         if (!islandReady) {
             pendingState = Pair(stateStr, textStr)
             return
@@ -157,8 +188,82 @@ class OverlayService : Service() {
         handler.post { applyState(stateStr, textStr) }
     }
 
+    private fun registerDeviceEvents() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
+        batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val percent = if (level >= 0 && scale > 0) level * 100 / scale else null
+                val plugged = battery?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+                surfaceStore.setBattery(percent, plugged != 0)
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(batteryReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(batteryReceiver, filter)
+            }
+            batteryReceiver?.onReceive(this, null)
+        } catch (e: Exception) {
+            VoxynLogger.w("Battery status unavailable: ${e.message}", "OVERLAY")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val callback = object : AudioDeviceCallback() {
+                    override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = updateHeadphones(audioManager)
+                    override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = updateHeadphones(audioManager)
+                }
+                audioDeviceCallback = callback
+                audioManager.registerAudioDeviceCallback(callback, handler)
+                updateHeadphones(audioManager)
+            } catch (e: Exception) {
+                VoxynLogger.w("Headphone status unavailable: ${e.message}", "OVERLAY")
+                surfaceStore.setHeadphonesConnected(false, available = false)
+            }
+        }
+    }
+
+    private fun updateHeadphones(audioManager: AudioManager) {
+        try {
+            val headphoneTypes = setOf(
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLE_HEADSET
+            )
+            surfaceStore.setHeadphonesConnected(audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in headphoneTypes })
+        } catch (e: SecurityException) {
+            surfaceStore.setHeadphonesConnected(false, available = false)
+            VoxynLogger.w("Headphone status requires device access: ${e.message}", "OVERLAY")
+        }
+    }
+
+    private fun unregisterDeviceEvents() {
+        batteryReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+        batteryReceiver = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            audioDeviceCallback?.let {
+                try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(it) } catch (_: Exception) {}
+            }
+        }
+        audioDeviceCallback = null
+    }
+
     fun setMicrophoneLevel(rmsDb: Float) {
         handler.post { dynamicIsland?.updateAudioLevel(rmsDb) }
+    }
+
+    fun setSpeechActive(active: Boolean) {
+        handler.post { dynamicIsland?.setSpeechActive(active) }
     }
 
     private fun applyState(stateStr: String, textStr: String?) {
@@ -167,9 +272,9 @@ class OverlayService : Service() {
             "STOPPED"     -> IslandState.STOPPED
             "LISTENING"    -> IslandState.LISTENING
             "PROCESSING",
-            "THINKING"     -> IslandState.PROCESSING
-            "SPEAKING",
-            "EXECUTING"    -> IslandState.SPEAKING
+            "THINKING",
+            "EXECUTING"    -> IslandState.EXECUTING
+            "SPEAKING"    -> IslandState.SPEAKING
             "CONFIRMATION" -> IslandState.CONFIRMATION
             "SUCCESS"      -> IslandState.SUCCESS
             "ERROR"        -> IslandState.ERROR

@@ -42,4 +42,10 @@ class ClockIntentTest {
         val missing = router.route("set a timer")
         assertEquals("duration", missing.params["needs_clarification"])
     }
+
+    @Test
+    fun `show timers and alarms route to existing clock capability`() {
+        assertEquals("SHOW_TIMERS", router.route("show timers").action)
+        assertEquals("SHOW_ALARMS", router.route("open my alarms").action)
+    }
 }
