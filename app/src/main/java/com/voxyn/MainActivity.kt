@@ -62,8 +62,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-        } else {
-            startVoxynServices()
         }
         checkOverlayPermission()
     }
@@ -170,7 +168,9 @@ class MainActivity : ComponentActivity() {
         if (needed.isNotEmpty()) {
             permissionLauncher.launch(needed.toTypedArray())
         } else {
-            startVoxynServices()
+            // Microphone foreground services must start only after this Activity
+            // is visible. onResume owns that transition; starting here in onCreate
+            // can race Android's foreground-service eligibility checks.
             checkOverlayPermission()
             checkBatteryOptimization()
         }
