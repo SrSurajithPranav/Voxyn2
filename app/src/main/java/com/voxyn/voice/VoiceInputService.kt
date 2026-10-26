@@ -10,11 +10,15 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import com.voxyn.MainActivity
+import com.voxyn.core.VoxynConstants
 import com.voxyn.engine.VoxynEngine
 import com.voxyn.utils.VoxynLogger
 import kotlinx.coroutines.CoroutineScope
@@ -45,12 +49,6 @@ class VoiceInputService : Service() {
         const val EXTRA_SESSION_ID       = "com.voxyn.voice.SESSION_ID"
         const val CHANNEL_ID             = "voxyn_voice"
         const val NOTIFICATION_ID        = 3002
-
-        private const val START_DELAY_MS          = 200L
-        private const val REARM_DELAY_MS          = 1_000L
-        private const val FIRST_COMMAND_MAX_ATTEMPTS = 2
-        private const val MAX_CONSECUTIVE_FAILURES   = 2
-        private const val PIPELINE_MAX_WAIT_MS    = 60_000L
     }
 
     private val scope       = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -70,6 +68,15 @@ class VoiceInputService : Service() {
     private var consecutiveFailures = 0
     private var currentSessionId  : String = ""
     private var wakeLock          : android.os.PowerManager.WakeLock? = null
+
+    // ─── Phase 1: Audio hygiene effects (attached after AudioRecord starts) ──
+    private var echoCanceler : AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var gainControl  : AutomaticGainControl? = null
+
+    // ─── Phase 1: Call interruption ───────────────────────────────────────────
+    private var callWatcher  : CallWatcher? = null
+    @Volatile private var micPausedForCall = false
 
     @Volatile private var isListening = false
     @Volatile private var stopping    = false
@@ -92,6 +99,20 @@ class VoiceInputService : Service() {
             setReferenceCounted(false)
             acquire(24 * 60 * 60 * 1000L) // 24-hour safe wake lock for 24x7 listening
         }
+
+        // Phase 1: Register call watcher — pauses mic on incoming/active calls.
+        callWatcher = CallWatcher(this) { shouldPause ->
+            micPausedForCall = shouldPause
+            if (shouldPause) {
+                VoxynLogger.i("Call detected — pausing microphone", "VOICE")
+                stopListeningInternal()
+            } else {
+                VoxynLogger.i("Call ended — resuming microphone", "VOICE")
+                if (!stopping) mainHandler.postDelayed({ beginListening() }, VoxynConstants.MIC_SETTLE_MS)
+            }
+        }
+        callWatcher?.register()
+
         VoxynLogger.i("VoiceInputService created (24x7 Always-Listening Mode)", "VOICE")
     }
 
@@ -107,7 +128,7 @@ class VoiceInputService : Service() {
                 val sid = intent?.getStringExtra(EXTRA_SESSION_ID)
                 currentSessionId = if (!sid.isNullOrBlank()) sid else coordinator.onWakeDetected()
                 VoxynLogger.i("ACTION_START_LISTENING received (session: $currentSessionId)", "VOICE")
-                mainHandler.postDelayed({ beginListening() }, START_DELAY_MS)
+                mainHandler.postDelayed({ beginListening() }, VoxynConstants.START_DELAY_MS)
             }
         }
         return START_STICKY
@@ -118,6 +139,9 @@ class VoiceInputService : Service() {
     override fun onDestroy() {
         stopping = true
         stopListeningInternal()
+        callWatcher?.unregister()
+        callWatcher = null
+        releaseAudioEffects()
         try {
             if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (_: Exception) {}
@@ -130,7 +154,7 @@ class VoiceInputService : Service() {
     // ─── Listening ────────────────────────────────────────────────────
 
     private fun beginListening() {
-        if (stopping || isListening) return
+        if (stopping || isListening || micPausedForCall) return
         isListening = true
         updateNotification("VOXYN — Always On")
 
@@ -167,6 +191,17 @@ class VoiceInputService : Service() {
             return
         }
         coordinator.onListeningStarted(currentSessionId, recognizerEngine::class.simpleName ?: "Engine")
+
+        // Phase 1: Attach hardware audio effects to the active audio session.
+        // getAudioSessionId() is available on SherpaParakeetRecognizer and
+        // VoskCommandRecognizer — fall back gracefully if the method is absent.
+        val sessionId = when (recognizerEngine) {
+            is SherpaParakeetRecognizer -> recognizerEngine.getAudioSessionId()
+            is VoskCommandRecognizer    -> recognizerEngine.getAudioSessionId()
+            else                        -> -1
+        }
+        attachAudioEffects(sessionId)
+
         VoxynLogger.i("Always-listening active (${recognizerEngine::class.simpleName})", "VOICE")
     }
 
@@ -204,8 +239,9 @@ class VoiceInputService : Service() {
                     isListening = false
                     activeEngine?.stop()
                     activeEngine = null
+                    releaseAudioEffects()
                     releaseAudioFocus()
-                    mainHandler.postDelayed({ if (!stopping) beginListening() }, 300L)
+                    mainHandler.postDelayed({ if (!stopping) beginListening() }, VoxynConstants.MIC_SETTLE_MS)
                 }
             }
         }
@@ -272,10 +308,13 @@ class VoiceInputService : Service() {
 
     private fun waitForEngineThenContinue() {
         scope.launch {
-            val deadline = System.currentTimeMillis() + PIPELINE_MAX_WAIT_MS
+            val deadline = System.currentTimeMillis() + VoxynConstants.PIPELINE_MAX_WAIT_MS
             while (System.currentTimeMillis() < deadline && (engine.isProcessing() || tts.isSpeaking())) {
                 delay(200L)
             }
+            // Phase 1: Apply MIC_SETTLE_MS before re-arming the AudioRecord
+            // session to avoid HAL race conditions after TTS playback finishes.
+            delay(VoxynConstants.MIC_SETTLE_MS)
             mainHandler.post {
                 if (stopping) return@post
                 coordinator.onSessionEnded()
@@ -292,17 +331,69 @@ class VoiceInputService : Service() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
+        releaseAudioEffects()
         releaseAudioFocus()
-        mainHandler.postDelayed({ if (!stopping) beginListening() }, 100L)
+        mainHandler.postDelayed({ if (!stopping) beginListening() }, VoxynConstants.SILENCE_REARM_DELAY_MS)
     }
 
     private fun stopListeningInternal() {
         isListening = false
         activeEngine?.stop()
         activeEngine = null
+        releaseAudioEffects()
         releaseAudioFocus()
         coordinator.onSessionEnded()
         currentSessionId = ""
+    }
+
+    // ─── Phase 1: Hardware audio effects ─────────────────────────────────────
+
+    /**
+     * Attach AcousticEchoCanceler, NoiseSuppressor, and AutomaticGainControl
+     * to the AudioRecord's audio session. All three run at HAL level — they
+     * process PCM before it reaches Vosk or Parakeet, so they don't add
+     * CPU overhead to our IO work.
+     *
+     * Each effect is guarded by isAvailable() because not every device
+     * exports these effects (some low-end SOCs omit AEC in the HAL).
+     */
+    private fun attachAudioEffects(audioSessionId: Int) {
+        if (audioSessionId <= 0) {
+            VoxynLogger.w("AudioSessionId unavailable — skipping hardware audio effects", "VOICE")
+            return
+        }
+        releaseAudioEffects() // clear any stale effects from previous session
+
+        if (AcousticEchoCanceler.isAvailable()) {
+            echoCanceler = AcousticEchoCanceler.create(audioSessionId)?.apply { enabled = true }
+            VoxynLogger.i("AcousticEchoCanceler attached (sessionId=$audioSessionId)", "VOICE")
+        } else {
+            VoxynLogger.w("AcousticEchoCanceler not available on this device", "VOICE")
+        }
+
+        if (NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = NoiseSuppressor.create(audioSessionId)?.apply { enabled = true }
+            VoxynLogger.i("NoiseSuppressor attached", "VOICE")
+        } else {
+            VoxynLogger.w("NoiseSuppressor not available on this device", "VOICE")
+        }
+
+        if (AutomaticGainControl.isAvailable()) {
+            gainControl = AutomaticGainControl.create(audioSessionId)?.apply { enabled = true }
+            VoxynLogger.i("AutomaticGainControl attached", "VOICE")
+        } else {
+            VoxynLogger.w("AutomaticGainControl not available on this device", "VOICE")
+        }
+    }
+
+    /** Release all active hardware audio effects. Safe to call when none attached. */
+    private fun releaseAudioEffects() {
+        echoCanceler?.release()
+        echoCanceler = null
+        noiseSuppressor?.release()
+        noiseSuppressor = null
+        gainControl?.release()
+        gainControl = null
     }
 
     // ─── Audio focus ──────────────────────────────────────────────────
