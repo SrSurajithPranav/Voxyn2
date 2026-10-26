@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -98,10 +100,14 @@ object VoxynLogger {
         Log.e(tag, message, throwable).also { sink("E", tag, message) }
 
     /** Synchronous post — used for crash lines that must not be lost. */
-    fun crash(message: String) {
-        Log.e("FATAL", message)
-        appendToFile("FATAL", "VOXYN", message)
-        post("FATAL: $message")
+    fun crash(message: String, throwable: Throwable? = null) {
+        val details = throwable?.let { error ->
+            StringWriter().also { writer -> error.printStackTrace(PrintWriter(writer)) }.toString()
+        }
+        val completeMessage = if (details.isNullOrBlank()) message else "$message\n$details"
+        Log.e("FATAL", completeMessage, throwable)
+        appendToFile("FATAL", "VOXYN", completeMessage)
+        post("FATAL: $completeMessage")
     }
 
     fun engine(message: String) = i(message, "VOXYN::ENGINE")
