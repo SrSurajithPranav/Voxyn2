@@ -32,6 +32,8 @@ class IslandSurfaceStoreTest {
             store.setBattery(73, true)
             store.setHeadphonesConnected(true)
             assertTrue(store.state.value.expanded)
+            store.setExpanded(false)
+            assertFalse(store.state.value.expanded)
             assertEquals(73, store.state.value.batteryPercent)
             assertTrue(store.state.value.charging)
             assertTrue(store.state.value.headphonesConnected)
