@@ -1,6 +1,7 @@
 package com.voxyn
 
 import android.app.Application
+import android.app.ActivityManager
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -33,6 +34,7 @@ class VoxynApplication : Application() {
         }
 
         logDiagnostics()
+        logPreviousProcessExits()
         VoxynLogger.i("VOXYN starting — background model restoration scheduled", "APP")
         VoxynLogger.i("Microphone service starts when the app is visible", "APP")
         restoreModelsInBackground()
@@ -96,6 +98,39 @@ class VoxynApplication : Application() {
                 "micGranted=$mic notificationsGranted=$notif overlay=${Settings.canDrawOverlays(this)}",
             "APP"
         )
+    }
+
+    /** Android keeps crash and ANR details for our own process even if the process
+     * died before VoxynLogger could flush its fatal line. Copy recent records into
+     * the Termux/file log on the next launch. */
+    private fun logPreviousProcessExits() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return
+        runCatching {
+            activityManager.getHistoricalProcessExitReasons(packageName, 0, 5)
+                .take(3)
+                .forEach { exit ->
+                    VoxynLogger.w(
+                        "Previous process exit reason=${exit.reason} status=${exit.status} " +
+                            "importance=${exit.importance} timestamp=${exit.timestamp} " +
+                            "description=${exit.description}",
+                        "CRASH"
+                    )
+                    if (exit.reason == android.app.ApplicationExitInfo.REASON_CRASH ||
+                        exit.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                        exit.reason == android.app.ApplicationExitInfo.REASON_ANR
+                    ) {
+                        val trace = exit.traceInputStream?.bufferedReader()?.use { reader ->
+                            reader.readText().take(32_000)
+                        }
+                        if (!trace.isNullOrBlank()) {
+                            VoxynLogger.e("Previous process exit trace:\n$trace", tag = "CRASH")
+                        }
+                    }
+                }
+        }.onFailure { error ->
+            VoxynLogger.w("Could not read previous process exit details: ${error.message}", "CRASH")
+        }
     }
 
     private fun installCrashHandler() {
