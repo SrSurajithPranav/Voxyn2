@@ -15,6 +15,9 @@ import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
 import com.voxyn.overlay.OverlayService
+import com.voxyn.overlay.IslandState
+import com.voxyn.overlay.IslandSurfaceStore
+import com.voxyn.overlay.islandStateFromPipeline
 import com.voxyn.perception.SpeechNormalizer
 import com.voxyn.router.RequestRouter
 import com.voxyn.router.RouteDecision
@@ -25,10 +28,21 @@ import com.voxyn.voice.TextToSpeechManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.ThreadContextElement
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.coroutines.CoroutineContext
+
+private val pipelineGenerationContext = ThreadLocal<Long?>()
+private class PipelineGenerationElement(private val value: Long) : ThreadContextElement<Long?>,
+    CoroutineContext.Element {
+    companion object Key : CoroutineContext.Key<PipelineGenerationElement>
+    override val key: CoroutineContext.Key<PipelineGenerationElement> get() = Key
+    override fun updateThreadContext(context: CoroutineContext): Long? = pipelineGenerationContext.get().also { pipelineGenerationContext.set(value) }
+    override fun restoreThreadContext(context: CoroutineContext, oldState: Long?) { pipelineGenerationContext.set(oldState) }
+}
 
 private data class ContactClarificationState(
     val intent: IntentResult,
@@ -63,6 +77,7 @@ class VoxynEngine(
     private val claudeResolver : ClaudeIntentResolver? = null,
     private val modeEngine     : ModeEngine? = null,
     private val contactResolver: ContactResolver,
+    private val islandSurfaceStore: IslandSurfaceStore? = null,
     private val phaseTimeoutMs : Long = 10_000L
 ) {
     private val _events = MutableSharedFlow<PipelineEvent>(extraBufferCapacity = 64)
@@ -81,11 +96,13 @@ class VoxynEngine(
 
     fun isProcessing(): Boolean = processing
 
+    @Synchronized
     fun process(input: String) {
-        activeJob?.cancel()
         val gen = ++pipelineGen
+        islandSurfaceStore?.beginPipeline(gen)
+        activeJob?.cancel()
         processing = true
-        activeJob = scope.launch {
+        activeJob = scope.launch(PipelineGenerationElement(gen)) {
             try {
                 runPipeline(input)
             } finally {
@@ -94,7 +111,10 @@ class VoxynEngine(
         }
     }
 
+    @Synchronized
     fun interrupt(reason: String = "Interrupted") {
+        val gen = ++pipelineGen
+        islandSurfaceStore?.beginPipeline(gen)
         activeJob?.cancel()
         pendingInput = null
         pendingIntent = null
@@ -290,13 +310,31 @@ class VoxynEngine(
     /** Executes a single, already-decided intent through plan → verify → learn. */
     private suspend fun executeIntent(intent: IntentResult, claudeSpeak: String?) {
         val actionText = friendlyAction(intent.action)
+        setOverlay("PLANNING", "Planning $actionText")
+        val plan = phase(PipelinePhase.PLAN) { buildPlan(intent) } ?: run {
+            islandSurfaceStore?.setVerificationResult(intent.action, "Planning failed", pipelineGenerationContext.get())
+            return
+        }
         setOverlay("EXECUTING", actionText)
-
-        val plan     = phase(PipelinePhase.PLAN)   { buildPlan(intent) } ?: return
-        val executed = executeWithRecovery(plan)    ?: return
+        val executed = executeWithRecovery(plan) ?: run {
+            islandSurfaceStore?.setVerificationResult(intent.action, "Execution failed before verification", pipelineGenerationContext.get())
+            return
+        }
+        setOverlay("VERIFYING", "Verifying $actionText")
         val outcome  = phase(PipelinePhase.VERIFY) { verify(executed) }  ?: return
 
         emit(PipelineEvent.VerificationResult(outcome))
+        islandSurfaceStore?.setVerificationResult(
+            intent.action,
+            when (outcome) {
+                VerificationOutcome.Success -> "Verified"
+                VerificationOutcome.PartialSuccess -> "Partially verified"
+                VerificationOutcome.Failure -> "Failed verification"
+                VerificationOutcome.NeedsRollback -> "Rollback required"
+                VerificationOutcome.Unverified -> "Outcome unverified"
+            },
+            pipelineGenerationContext.get()
+        )
 
         val isSuccess = outcome is VerificationOutcome.Success
         setOverlay(if (isSuccess) "SUCCESS" else "ERROR", if (isSuccess) "Completed" else "Failed")
@@ -559,6 +597,7 @@ class VoxynEngine(
 
     private suspend fun runChainExecution(action: String, stepsJsonStr: String, claudeSpeak: String?) {
         VoxynLogger.i("Executing Smart Chain sequence: $stepsJsonStr", "ENGINE")
+        setOverlay("PLANNING", "Planning sequence")
         val stepsList = mutableListOf<String>()
         runCatching {
             val arr = JSONArray(stepsJsonStr)
@@ -597,6 +636,7 @@ class VoxynEngine(
 
             val result = executor.execute(step)
             if (result is PhaseResult.Failure) {
+                islandSurfaceStore?.setVerificationResult(action, "Execution failed at ${step.actionType}", pipelineGenerationContext.get())
                 setOverlay("ERROR", "Chain failed at ${step.actionType}")
                 tts.speak("Failed to ${step.actionType}")
                 emit(PipelineEvent.PhaseFailed(PipelinePhase.EXECUTE, result.error, false))
@@ -612,9 +652,21 @@ class VoxynEngine(
             delay(500L) // 500ms gap between steps
         }
 
+        setOverlay("VERIFYING", "Verifying sequence")
         val outcomes = executionResults.map { (step, result) -> executor.verify(step, result) }
         val outcome = combineVerification(outcomes)
         emit(PipelineEvent.VerificationResult(outcome))
+        islandSurfaceStore?.setVerificationResult(
+            action,
+            when (outcome) {
+                VerificationOutcome.Success -> "Verified"
+                VerificationOutcome.PartialSuccess -> "Partially verified"
+                VerificationOutcome.Failure -> "Failed verification"
+                VerificationOutcome.NeedsRollback -> "Rollback required"
+                VerificationOutcome.Unverified -> "Outcome unverified"
+            },
+            pipelineGenerationContext.get()
+        )
         val chainResponse = when (outcome) {
             VerificationOutcome.Success -> "Sequence completed."
             VerificationOutcome.PartialSuccess -> "Sequence completed, but some steps were only partly verified."
@@ -981,18 +1033,20 @@ class VoxynEngine(
     private fun emit(event: PipelineEvent) { scope.launch { _events.emit(event) } }
 
     private fun setOverlay(state: String, text: String? = null) {
+        val mapped = islandStateFromPipeline(state)
+        if (mapped == null) {
+            VoxynLogger.w("Ignoring unknown island state: $state", "OVERLAY")
+            return
+        }
+        val generation = pipelineGenerationContext.get() ?: pipelineGen
+        if (islandSurfaceStore?.setVoiceState(mapped, text, generation) == false) return
         // Use singleton directly to avoid startService latency and race conditions
         val overlay = OverlayService.instance
-        if (overlay != null) {
-            overlay.setState(state, text)
-        } else {
+        if (overlay == null) {
             // Service not running yet — start it (state will be queued internally)
             try {
                 context.startService(
-                    Intent(context, OverlayService::class.java).apply {
-                        putExtra("state", state)
-                        text?.let { putExtra("text", it) }
-                    }
+                    Intent(context, OverlayService::class.java)
                 )
             } catch (_: Exception) {}
         }

@@ -70,6 +70,8 @@ class VoiceInputService : Service() {
     private var audioFocusRequest : AudioFocusRequest? = null
     private var consecutiveFailures = 0
     private var currentSessionId  : String = ""
+    @Volatile private var captureGeneration = 0L
+    @Volatile private var activeCaptureId: String? = null
     private var wakeLock          : android.os.PowerManager.WakeLock? = null
 
     // ─── Phase 1: Audio hygiene effects (attached after AudioRecord starts) ──
@@ -168,6 +170,12 @@ class VoiceInputService : Service() {
         if (currentSessionId.isBlank() || coordinator.getState() == SessionState.IDLE) {
             currentSessionId = coordinator.onWakeDetected()
         }
+        val sessionId = currentSessionId
+        val captureId = "$sessionId:${++captureGeneration}"
+        activeCaptureId = captureId
+        islandSurfaceStore.beginCapture(captureId)
+        val mayShowPartial = speakerProfileRepository.getAllProfiles().isEmpty()
+        val listener = createEngineListener(sessionId, captureId, captureGeneration, mayShowPartial)
 
         // First-time setup: if Parakeet isn't downloaded yet, fetch it in the
         // background (progressed in the notification) while Vosk handles commands.
@@ -177,61 +185,82 @@ class VoiceInputService : Service() {
 
         val recognizerEngine = engineProvider.currentEngine()
         activeEngine = recognizerEngine
-        if (!recognizerEngine.start(engineListener)) {
+        if (!recognizerEngine.start(listener)) {
             engineProvider.reportEngineFailure(recognizerEngine, "Engine start returned false")
             val fallbackEngine = engineProvider.getFallbackEngine()
             activeEngine = fallbackEngine
-            if (!fallbackEngine.start(engineListener)) {
+            if (!fallbackEngine.start(listener)) {
                 mainHandler.post {
                     if (stopping) return@post
                     isListening = false
                     activeEngine = null
                     releaseAudioFocus()
+                    islandSurfaceStore.clearCapture(captureId, unavailable = true)
+                    activeCaptureId = null
                     OverlayService.instance?.setState("RECOVERING", "Restarting voice input")
                     updateNotification("VOXYN — voice engine unavailable")
                     mainHandler.postDelayed({ if (!stopping) beginListening() }, 3_000L)
                 }
                 return
             }
+            islandSurfaceStore.setVoiceState(com.voxyn.overlay.IslandState.LISTENING)
             OverlayService.instance?.setState("LISTENING")
             VoxynLogger.i("Command listening started via fallback (${fallbackEngine::class.simpleName})", "VOICE")
             return
         }
+        islandSurfaceStore.setVoiceState(com.voxyn.overlay.IslandState.LISTENING)
         OverlayService.instance?.setState("LISTENING")
         coordinator.onListeningStarted(currentSessionId, recognizerEngine::class.simpleName ?: "Engine")
 
         // Phase 1: Attach hardware audio effects to the active audio session.
         // getAudioSessionId() is available on SherpaParakeetRecognizer and
         // VoskCommandRecognizer — fall back gracefully if the method is absent.
-        val sessionId = when (recognizerEngine) {
+        val audioSessionId = when (recognizerEngine) {
             is SherpaParakeetRecognizer -> recognizerEngine.getAudioSessionId()
             is VoskCommandRecognizer    -> recognizerEngine.getAudioSessionId()
             else                        -> -1
         }
-        attachAudioEffects(sessionId)
+        attachAudioEffects(audioSessionId)
 
         VoxynLogger.i("Always-listening active (${recognizerEngine::class.simpleName})", "VOICE")
     }
 
-    private val engineListener: SpeechRecognizerEngine.Listener = object : SpeechRecognizerEngine.Listener {
+    private fun createEngineListener(
+        sessionId: String,
+        captureId: String,
+        generation: Long,
+        mayShowPartial: Boolean
+    ): SpeechRecognizerEngine.Listener = object : SpeechRecognizerEngine.Listener {
+        private var lastPartial = ""
+        private var lastPartialAt = 0L
+
+        private fun isCurrentCapture(): Boolean = !stopping && generation == captureGeneration
+
         override fun onSpeechDetected() {
-            // Keep completely silent & invisible: do not reveal or change notification until verified owner
+            if (isCurrentCapture()) islandSurfaceStore.setVoiceState(com.voxyn.overlay.IslandState.LISTENING)
         }
 
         override fun onPartial(text: String) {
-            // Keep completely silent & invisible: do not reveal or change notification until verified owner
+            if (!mayShowPartial || !isCurrentCapture()) return
+            val normalized = text.trim().take(120)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (normalized.isEmpty() || normalized == lastPartial || now - lastPartialAt < 120L) return
+            lastPartial = normalized
+            lastPartialAt = now
+            islandSurfaceStore.setPartialTranscript(captureId, normalized)
         }
 
         override fun onAudioLevel(rmsDb: Float) {
-            OverlayService.instance?.setMicrophoneLevel(rmsDb)
+            if (isCurrentCapture()) OverlayService.instance?.setMicrophoneLevel(rmsDb)
         }
 
         override fun onResult(text: String, audioDurationMs: Long, inferenceMs: Long, audioSamples: ShortArray?) {
             mainHandler.post {
-                if (stopping) return@post
+                if (!isCurrentCapture()) return@post
+                islandSurfaceStore.setVoiceState(com.voxyn.overlay.IslandState.VERIFYING, "Verifying speaker")
                 val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
                 val isMediaPlaying = audioManager?.isMusicActive == true
-                val gateOutcome = coordinator.onSpeechResult(currentSessionId, text, audioDurationMs, audioSamples, isMediaPlaying)
+                val gateOutcome = coordinator.onSpeechResult(sessionId, text, audioDurationMs, audioSamples, isMediaPlaying)
                 val profiles = speakerProfileRepository.getAllProfiles()
                 val isAuthorized = when (gateOutcome) {
                     is com.voxyn.security.GateResult.Authorized -> {
@@ -242,11 +271,14 @@ class VoiceInputService : Service() {
                 }
 
                 if (isAuthorized) {
-                    islandSurfaceStore.setVerifiedTranscript(text)
+                    islandSurfaceStore.setFinalTranscript(captureId, text)
+                    activeCaptureId = null
                     handleResult(text)
                 } else {
                     VoxynLogger.w("Voice command rejected or unverified speaker — silently dropping (no sound, no display)", "VOICE")
                     // If voice not recognized, won't say or show anything!
+                    islandSurfaceStore.clearCapture(captureId, message = "Voice not verified")
+                    activeCaptureId = null
                     coordinator.onSessionEnded()
                     currentSessionId = ""
                     isListening = false
@@ -261,16 +293,19 @@ class VoiceInputService : Service() {
 
         override fun onNoSpeech() {
             mainHandler.post {
-                if (stopping) return@post
+                if (!isCurrentCapture()) return@post
+                islandSurfaceStore.clearCapture(captureId, message = "No speech recognized")
+                activeCaptureId = null
                 handleSilence("no-speech")
             }
         }
 
         override fun onError(message: String) {
+            if (!isCurrentCapture()) return
             val listenerInstance = this
             VoxynLogger.w("Command STT error: $message", "VOICE")
             mainHandler.post {
-                if (stopping) return@post
+                if (!isCurrentCapture()) return@post
                 val current = activeEngine
                 if (current is SherpaParakeetRecognizer) {
                     engineProvider.reportEngineFailure(current, message)
@@ -283,6 +318,8 @@ class VoiceInputService : Service() {
                         return@post
                     }
                 }
+                islandSurfaceStore.clearCapture(captureId, unavailable = true)
+                activeCaptureId = null
                 handleSilence("error")
             }
         }
@@ -306,12 +343,11 @@ class VoiceInputService : Service() {
     }
 
     private fun handleResult(text: String) {
-        if (stopping) return
         isListening = false
         activeEngine?.stop()
         activeEngine = null
         releaseAudioFocus()
-        OverlayService.instance?.setState("PROCESSING")
+        islandSurfaceStore.setVoiceState(com.voxyn.overlay.IslandState.PROCESSING, "Processing command")
         consecutiveFailures = 0
         updateNotification("Processing: \"$text\"...")
 
@@ -353,6 +389,9 @@ class VoiceInputService : Service() {
     }
 
     private fun stopListeningInternal() {
+        captureGeneration++ // Invalidate callbacks from the recognizer being stopped.
+        activeCaptureId?.let { islandSurfaceStore.clearCapture(it, message = if (stopping) "Listening stopped" else "Listening paused") }
+        activeCaptureId = null
         isListening = false
         activeEngine?.stop()
         activeEngine = null

@@ -15,12 +15,14 @@ import kotlinx.coroutines.launch
 data class IslandSurfaceState(
     val voiceState: IslandState = IslandState.IDLE,
     val label: String = "VOXYN",
+    val partialTranscript: String = "",
     val expanded: Boolean = false,
     val mascotEnabled: Boolean = true,
     val minimalNotch: Boolean = false,
     val verifiedTranscript: String? = null,
     val recentAction: String? = null,
     val verificationOutcome: String? = null,
+    val transcriptionUnavailable: Boolean = false,
     val batteryPercent: Int? = null,
     val charging: Boolean = false,
     val headphonesConnected: Boolean = false,
@@ -34,6 +36,8 @@ class IslandSurfaceStore(
 ) {
     private val _state = MutableStateFlow(IslandSurfaceState())
     val state: StateFlow<IslandSurfaceState> = _state.asStateFlow()
+    @Volatile private var activeCaptureId: String? = null
+    @Volatile private var activePipelineGeneration: Long = 0L
 
     init {
         scope.launch {
@@ -48,29 +52,97 @@ class IslandSurfaceStore(
         }
     }
 
-    fun setVoiceState(state: IslandState, label: String? = null) {
+    @Synchronized
+    fun beginCapture(sessionId: String) {
+        if (sessionId.isBlank()) return
+        activeCaptureId = sessionId
+        _state.update {
+            it.copy(
+                voiceState = IslandState.LISTENING,
+                label = defaultLabel(IslandState.LISTENING),
+                partialTranscript = "",
+                verifiedTranscript = null,
+                transcriptionUnavailable = false
+            )
+        }
+    }
+
+    @Synchronized
+    fun setPartialTranscript(sessionId: String, text: String): Boolean {
+        if (sessionId.isBlank() || sessionId != activeCaptureId) return false
+        val partial = text.trim().take(120)
+        if (partial.isEmpty()) return false
+        _state.update {
+            it.copy(
+                voiceState = IslandState.PARTIAL_TRANSCRIPT,
+                label = "Hearing you",
+                partialTranscript = partial,
+                transcriptionUnavailable = false
+            )
+        }
+        return true
+    }
+
+    @Synchronized
+    fun setFinalTranscript(sessionId: String, text: String): Boolean {
+        if (sessionId.isBlank() || sessionId != activeCaptureId) return false
+        activeCaptureId = null
+        val finalText = text.trim().take(240)
+        _state.update {
+            it.copy(
+                voiceState = if (finalText.isBlank()) IslandState.RECOVERING else IslandState.VERIFYING,
+                label = if (finalText.isBlank()) "No speech recognized" else "Verifying command",
+                verifiedTranscript = finalText.takeIf(String::isNotBlank),
+                partialTranscript = "",
+                transcriptionUnavailable = false
+            )
+        }
+        return true
+    }
+
+    @Synchronized
+    fun clearCapture(sessionId: String, unavailable: Boolean = false, message: String? = null) {
+        if (activeCaptureId != null && activeCaptureId != sessionId) return
+        activeCaptureId = null
+        _state.update {
+            it.copy(
+                partialTranscript = "",
+                transcriptionUnavailable = unavailable,
+                voiceState = IslandState.RECOVERING,
+                label = message ?: if (unavailable) "Speech recognition unavailable" else "No speech recognized"
+            )
+        }
+    }
+
+    @Synchronized
+    fun beginPipeline(generation: Long) {
+        if (generation < activePipelineGeneration) return
+        activePipelineGeneration = generation
+    }
+
+    @Synchronized
+    fun setVoiceState(state: IslandState, label: String? = null, generation: Long? = null): Boolean {
+        if (generation != null && generation < activePipelineGeneration) return false
         _state.update { current ->
             val nextLabel = label ?: defaultLabel(state)
             current.copy(
                 voiceState = state,
                 label = nextLabel,
-                recentAction = if (state == IslandState.SUCCESS || state == IslandState.ERROR) current.verifiedTranscript ?: current.recentAction else current.recentAction,
-                verificationOutcome = when (state) {
-                    IslandState.SUCCESS -> "Verified · $nextLabel"
-                    IslandState.ERROR -> "Failed · $nextLabel"
-                    else -> current.verificationOutcome
-                }
+                partialTranscript = if (state == IslandState.LISTENING || state == IslandState.IDLE) "" else current.partialTranscript
             )
         }
+        return true
+    }
+
+    @Synchronized
+    fun setVerificationResult(action: String, outcome: String, generation: Long? = null): Boolean {
+        if (generation != null && generation < activePipelineGeneration) return false
+        _state.update { it.copy(recentAction = action, verificationOutcome = outcome) }
+        return true
     }
 
     fun setExpanded(expanded: Boolean) {
         _state.update { it.copy(expanded = expanded) }
-    }
-
-    fun setVerifiedTranscript(text: String) {
-        val safeText = text.trim().take(240)
-        if (safeText.isNotEmpty()) _state.update { it.copy(verifiedTranscript = safeText) }
     }
 
     fun setBattery(percent: Int?, isCharging: Boolean) {
@@ -95,8 +167,11 @@ class IslandSurfaceStore(
         IslandState.STOPPED -> "Paused"
         IslandState.IDLE -> "VOXYN"
         IslandState.LISTENING -> "Listening…"
+        IslandState.PARTIAL_TRANSCRIPT -> "Hearing you"
         IslandState.PROCESSING -> "Thinking…"
+        IslandState.PLANNING -> "Planning…"
         IslandState.EXECUTING -> "Executing…"
+        IslandState.VERIFYING -> "Verifying…"
         IslandState.SPEAKING -> "Speaking…"
         IslandState.RECOVERING -> "Recovering…"
         IslandState.CONFIRMATION -> "Needs confirmation"

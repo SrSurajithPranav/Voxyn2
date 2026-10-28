@@ -11,7 +11,9 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -29,15 +31,14 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-enum class IslandState {
-    STOPPED, IDLE, LISTENING, PROCESSING, EXECUTING, SPEAKING, RECOVERING, CONFIRMATION, SUCCESS, ERROR
-}
-
 class DynamicIsland(
     context: Context,
     private val wm: WindowManager,
     private val lp: WindowManager.LayoutParams,
     private val surfaceStore: IslandSurfaceStore,
+    private val todoRepository: IslandTodoRepository,
+    private val mediaRepository: IslandMediaRepository,
+    private val activityRepository: IslandActivityRepository,
     private val onShortcut: (String) -> Unit
 ) : FrameLayout(context) {
 
@@ -73,7 +74,7 @@ class DynamicIsland(
         style = Paint.Style.FILL
         color = Color.parseColor("#00E676")
     }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val textPaint = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 11f * density
         isFakeBoldText = true
         color = Color.parseColor("#00E5FF")
@@ -120,7 +121,7 @@ class DynamicIsland(
 
     private val animationRunnable = object : Runnable {
         override fun run() {
-            val animateOrb = currentState == IslandState.PROCESSING
+            val animateOrb = currentState == IslandState.PROCESSING || currentState == IslandState.PLANNING
             val animateAvatar = currentState == IslandState.SPEAKING && speechActive
             if (!animateOrb && !animateAvatar) return
             if (!isShown || !animationsAllowed) return
@@ -163,9 +164,14 @@ class DynamicIsland(
         panel = ComposeView(context).apply {
             visibility = GONE
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent { IslandExpandedPanel(surfaceStore, ::collapse, onShortcut) }
+            setContent { IslandExpandedPanel(surfaceStore, todoRepository, mediaRepository, activityRepository, ::collapse, onShortcut) }
         }
         addView(panel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        isClickable = true
+        isLongClickable = true
+        isFocusable = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        contentDescription = "VOXYN assistant island"
     }
 
     override fun onDetachedFromWindow() {
@@ -186,7 +192,9 @@ class DynamicIsland(
         val collectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         stateCollection = collectionScope
         stateCollectionJob = collectionScope.launch {
-            surfaceStore.state.collect {
+            surfaceStore.state.collect { presentation ->
+                renderState(presentation)
+                if (expanded != presentation.expanded) applyExpanded(presentation.expanded)
                 invalidate()
                 scheduleIdleBlink()
             }
@@ -202,7 +210,7 @@ class DynamicIsland(
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (expanded && event.action == MotionEvent.ACTION_OUTSIDE) {
-            collapse()
+            surfaceStore.setExpanded(false)
             return true
         }
         return super.dispatchTouchEvent(event)
@@ -210,14 +218,18 @@ class DynamicIsland(
 
     // ─── Public API ───────────────────────────────────────────────────
 
-    fun updateState(state: IslandState, text: String? = null) {
-        // Must be called on main thread
+    fun renderState(presentation: IslandSurfaceState) {
         handler.post {
+            val state = presentation.voiceState
             transientStateRunnable?.let(handler::removeCallbacks)
             transientStateRunnable = null
             currentState = state
             restingEyesClosed = false
-            surfaceStore.setVoiceState(state, text)
+            val rawStatusText = if (state == IslandState.PARTIAL_TRANSCRIPT) {
+                presentation.partialTranscript.ifBlank { presentation.label }
+            } else presentation.label
+            val maxStatusWidth = screenWidth() * 0.82f - 64f * density
+            statusText = TextUtils.ellipsize(rawStatusText, textPaint, maxStatusWidth.coerceAtLeast(40f * density), TextUtils.TruncateAt.END).toString()
             handler.removeCallbacks(animationRunnable)
             handler.removeCallbacks(longPressRunnable)
 
@@ -225,7 +237,6 @@ class DynamicIsland(
                 IslandState.STOPPED, IslandState.IDLE -> {
                     audioLevel = 0f
                     lastAudioLevelAtMs = 0L
-                    statusText = "VOXYN"
                     textPaint.color = Color.parseColor("#00E5FF")
                     dotPaint.color  = Color.parseColor("#00E676")
                     bgPaint.color   = Color.parseColor("#F2000000")
@@ -234,23 +245,25 @@ class DynamicIsland(
                 }
                 IslandState.LISTENING -> {
                     audioLevel = 0f
-                    statusText = text ?: "Listening..."
                     textPaint.color = Color.WHITE
                     dotPaint.color  = Color.parseColor("#00E5FF")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#5500E5FF")
                     animateWidth(200 * density)
                 }
-                IslandState.PROCESSING, IslandState.EXECUTING -> {
-                    statusText = text ?: "Thinking..."
+                IslandState.PROCESSING, IslandState.PLANNING -> {
                     textPaint.color = Color.parseColor("#FFAB00")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#33FFAB00")
                     animateWidth(180 * density)
                 }
+                IslandState.EXECUTING, IslandState.VERIFYING -> {
+                    textPaint.color = Color.parseColor("#FFAB00")
+                    bgPaint.color = Color.parseColor("#F2000000")
+                    borderPaint.color = Color.parseColor("#33FFAB00")
+                    animateWidth((textPaint.measureText(statusText) + 56f * density).coerceIn(160f * density, screenWidth() * 0.82f))
+                }
                 IslandState.SPEAKING -> {
-                    val display = text ?: "Processing..."
-                    statusText = display
                     textPaint.color = Color.parseColor("#00E5FF")
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#3300E5FF")
@@ -258,7 +271,6 @@ class DynamicIsland(
                     animateWidth(w.coerceIn(160 * density, screenWidth() * 0.82f))
                 }
                 IslandState.RECOVERING -> {
-                    statusText = text ?: "Reconnecting..."
                     textPaint.color = Color.parseColor("#FFAB00")
                     dotPaint.color = Color.parseColor("#FFAB00")
                     bgPaint.color = Color.parseColor("#F2000000")
@@ -266,7 +278,6 @@ class DynamicIsland(
                     animateWidth(190 * density)
                 }
                 IslandState.CONFIRMATION -> {
-                    statusText = text ?: "Confirm action?"
                     textPaint.color = Color.WHITE
                     bgPaint.color   = Color.parseColor("#F2000000")
                     borderPaint.color = Color.parseColor("#33FFAB00")
@@ -274,30 +285,26 @@ class DynamicIsland(
                     animateWidth(w.coerceIn(220 * density, screenWidth() * 0.82f))
                 }
                 IslandState.SUCCESS -> {
-                    statusText = text ?: "Done!"
                     textPaint.color = Color.WHITE
                     bgPaint.color   = Color.parseColor("#F200C853") // green bg
                     borderPaint.color = Color.parseColor("#5500E676")
                     val w = textPaint.measureText(statusText) + 48 * density
                     animateWidth(w.coerceIn(140 * density, screenWidth() * 0.82f))
-                    transientStateRunnable = Runnable {
-                        bgPaint.color = Color.parseColor("#F2000000")
-                        updateState(IslandState.IDLE)
-                    }
-                    handler.postDelayed(transientStateRunnable!!, 1500L)
                 }
                 IslandState.ERROR -> {
-                    statusText = text ?: "Error"
                     textPaint.color = Color.WHITE
                     bgPaint.color   = Color.parseColor("#F2C62828") // red bg
                     borderPaint.color = Color.parseColor("#55FF1744")
                     val w = textPaint.measureText(statusText) + 48 * density
                     animateWidth(w.coerceIn(140 * density, screenWidth() * 0.82f))
-                    transientStateRunnable = Runnable {
-                        bgPaint.color = Color.parseColor("#F2000000")
-                        updateState(IslandState.IDLE)
-                    }
-                    handler.postDelayed(transientStateRunnable!!, 1500L)
+                }
+                IslandState.PARTIAL_TRANSCRIPT -> {
+                    audioLevel = 0f
+                    textPaint.color = Color.WHITE
+                    dotPaint.color = Color.parseColor("#00E5FF")
+                    bgPaint.color = Color.parseColor("#F2000000")
+                    borderPaint.color = Color.parseColor("#5500E5FF")
+                    animateWidth((textPaint.measureText(statusText) + 56f * density).coerceIn(180f * density, screenWidth() * 0.82f))
                 }
             }
             scheduleAnimation()
@@ -306,33 +313,40 @@ class DynamicIsland(
     }
 
     private fun toggleExpanded() {
-        if (expanded) collapse() else expand()
+        surfaceStore.setExpanded(!surfaceStore.state.value.expanded)
     }
 
     private fun expand() {
-        if (expanded) return
-        widthAnimator?.cancel()
-        expanded = true
-        panel.visibility = VISIBLE
-        panel.bringToFront()
         surfaceStore.setExpanded(true)
-        val targetWidth = (screenWidth() * 0.92f).coerceAtMost(420f * density).toInt()
-        val statusBarId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        val statusBarHeight = if (statusBarId > 0) resources.getDimensionPixelSize(statusBarId) else (24f * density).toInt()
-        val targetHeight = (460f * density).toInt().coerceAtMost(
-            (resources.displayMetrics.heightPixels - statusBarHeight - 32f * density).toInt().coerceAtLeast((300f * density).toInt())
-        )
-        lp.y = (8f * density).toInt() + statusBarHeight
-        animateWindowSize(targetWidth, targetHeight)
     }
 
     private fun collapse() {
-        if (!expanded) return
-        expanded = false
         surfaceStore.setExpanded(false)
-        panel.visibility = GONE
-        lp.y = (8f * density).toInt()
-        animateWindowSize(currentWidthPx.toInt().coerceAtMost(screenWidth().toInt()), compactHeightPx)
+    }
+
+    private fun applyExpanded(expand: Boolean) {
+        if (expanded == expand) return
+        widthAnimator?.cancel()
+        expanded = expand
+        if (expand) {
+            panel.visibility = VISIBLE
+            panel.bringToFront()
+            val targetWidth = (screenWidth() * 0.92f).coerceAtMost(420f * density).toInt()
+            val statusBarId = resources.getIdentifier("status_bar_height", "dimen", "android")
+            val statusBarHeight = if (statusBarId > 0) resources.getDimensionPixelSize(statusBarId) else (24f * density).toInt()
+            val targetHeight = (460f * density).toInt().coerceAtMost(
+                (resources.displayMetrics.heightPixels - statusBarHeight - 32f * density).toInt().coerceAtLeast((300f * density).toInt())
+            )
+            lp.y = (8f * density).toInt() + statusBarHeight
+            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            animateWindowSize(targetWidth, targetHeight)
+        } else {
+            panel.visibility = GONE
+            lp.y = (8f * density).toInt()
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            animateWindowSize(currentWidthPx.toInt().coerceAtMost(screenWidth().toInt()), compactHeightPx)
+        }
+        updateWindowLayout()
     }
 
     private fun animateWindowSize(targetWidth: Int, targetHeight: Int) {
@@ -360,7 +374,7 @@ class DynamicIsland(
 
     /** Called with RMS levels from the PCM buffers of the active recognizer. */
     fun updateAudioLevel(rmsDb: Float) {
-        if (currentState != IslandState.LISTENING) return
+        if (currentState != IslandState.LISTENING && currentState != IslandState.PARTIAL_TRANSCRIPT) return
         val target = ((rmsDb + 55f) / 40f).coerceIn(0f, 1f)
         val now = android.os.SystemClock.uptimeMillis()
         val elapsed = if (lastAudioLevelAtMs == 0L) 32L else (now - lastAudioLevelAtMs).coerceIn(1L, 250L)
@@ -382,7 +396,7 @@ class DynamicIsland(
 
     private fun scheduleAnimation() {
         handler.removeCallbacks(animationRunnable)
-        val shouldAnimate = currentState == IslandState.PROCESSING || currentState == IslandState.EXECUTING ||
+        val shouldAnimate = currentState == IslandState.PROCESSING || currentState == IslandState.PLANNING ||
             (currentState == IslandState.SPEAKING && speechActive)
         if (isShown && animationsAllowed && shouldAnimate) handler.post(animationRunnable)
         scheduleIdleBlink()
@@ -464,7 +478,7 @@ class DynamicIsland(
                 canvas.drawText(statusText, dotCx + dotR + 6 * density, textY, textPaint)
             }
 
-            IslandState.LISTENING -> {
+            IslandState.LISTENING, IslandState.PARTIAL_TRANSCRIPT -> {
                 // Pulsing dot + text
                 val dotR  = 4f * density + audioLevel * 4f * density
                 val dotCx = cornerRadiusPx
@@ -480,7 +494,7 @@ class DynamicIsland(
                 canvas.drawText(statusText, dotCx + 4f * density + dotR + 4 * density, textY, textPaint)
             }
 
-            IslandState.PROCESSING, IslandState.EXECUTING -> {
+            IslandState.PROCESSING, IslandState.PLANNING -> {
                 // Compact native Thinking Orb: one core and three orbiting particles.
                 val centerX = 19f * density
                 val orbitR = 6f * density
@@ -505,6 +519,12 @@ class DynamicIsland(
             IslandState.SPEAKING -> {
                 drawBotAvatar(canvas, 21f * density, cy)
                 canvas.drawText(statusText, 40f * density, textY, textPaint)
+            }
+
+            IslandState.EXECUTING, IslandState.VERIFYING -> {
+                val r = 4f * density
+                canvas.drawCircle(18f * density, cy, r, dotPaint)
+                canvas.drawText(statusText, 34f * density, textY, textPaint)
             }
 
             IslandState.RECOVERING,
@@ -576,8 +596,7 @@ class DynamicIsland(
                 val dx = abs(event.rawX - touchDownX)
                 val dy = abs(event.rawY - touchDownY)
                 if (dt < 600L && dx < 20f && dy < 20f) {
-                    // Tap opens the in-place information surface.
-                    if (!expanded) toggleExpanded()
+                    performClick()
                 }
                 return true
             }
@@ -587,5 +606,19 @@ class DynamicIsland(
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        toggleExpanded()
+        return true
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (expanded && event.action == KeyEvent.ACTION_UP && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            collapse()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 }

@@ -23,11 +23,13 @@ class IslandSurfaceStoreTest {
             val store = fixture.store
             store.setVoiceState(IslandState.LISTENING)
             assertEquals(IslandState.LISTENING, store.state.value.voiceState)
-            store.setVerifiedTranscript("Turn on the lights")
+            store.beginCapture("test-capture")
+            store.setFinalTranscript("test-capture", "Turn on the lights")
             store.setVoiceState(IslandState.PROCESSING, "Planning action")
+            store.setVerificationResult("LIGHTS_ON", "Verified")
             store.setVoiceState(IslandState.SUCCESS, "Lights on")
-            assertEquals("Turn on the lights", store.state.value.recentAction)
-            assertEquals("Verified · Lights on", store.state.value.verificationOutcome)
+            assertEquals("LIGHTS_ON", store.state.value.recentAction)
+            assertEquals("Verified", store.state.value.verificationOutcome)
             store.setExpanded(true)
             store.setBattery(73, true)
             store.setHeadphonesConnected(true)
@@ -46,6 +48,38 @@ class IslandSurfaceStoreTest {
         } finally {
             fixture.close()
         }
+    }
+
+    @Test
+    fun partialFinalAndStaleCaptureEventsAreHandled() = runBlocking {
+        val fixture = fixture()
+        try {
+            val store = fixture.store
+            store.beginCapture("capture-1")
+            assertTrue(store.setPartialTranscript("capture-1", "Turn on"))
+            assertEquals(IslandState.PARTIAL_TRANSCRIPT, store.state.value.voiceState)
+            assertEquals("Turn on", store.state.value.partialTranscript)
+            store.beginCapture("capture-2")
+            assertFalse(store.setPartialTranscript("capture-1", "stale text"))
+            assertTrue(store.setPartialTranscript("capture-2", "Turn on the lights"))
+            assertTrue(store.setFinalTranscript("capture-2", "Turn on the lights"))
+            assertEquals("Turn on the lights", store.state.value.verifiedTranscript)
+            assertEquals("", store.state.value.partialTranscript)
+            assertFalse(store.setPartialTranscript("capture-2", "late partial"))
+        } finally { fixture.close() }
+    }
+
+    @Test
+    fun newerPipelineGenerationRejectsStaleEvents() = runBlocking {
+        val fixture = fixture()
+        try {
+            val store = fixture.store
+            store.beginPipeline(8)
+            store.beginPipeline(9)
+            assertFalse(store.setVoiceState(IslandState.SUCCESS, "Old success", 8))
+            assertTrue(store.setVoiceState(IslandState.EXECUTING, "Running", 9))
+            assertEquals(IslandState.EXECUTING, store.state.value.voiceState)
+        } finally { fixture.close() }
     }
 
     @Test

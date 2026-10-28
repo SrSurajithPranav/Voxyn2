@@ -31,6 +31,10 @@ import com.voxyn.intent.IntentRouter
 import com.voxyn.memory.MemoryRepository
 import com.voxyn.mode.ModeEngine
 import com.voxyn.overlay.IslandSurfaceStore
+import com.voxyn.overlay.IslandTodoRepository
+import com.voxyn.overlay.IslandMediaRepository
+import com.voxyn.overlay.IslandActivityRepository
+import com.voxyn.overlay.AndroidIslandActivityAlarmScheduler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import com.voxyn.perception.AppNameResolver
@@ -59,13 +63,19 @@ import kotlinx.coroutines.SupervisorJob
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
+import org.koin.core.qualifier.named
 
 val appModule = module {
 
     // ─── Foundation ─────────────────────────────────────────────────────────────
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    single { PreferenceDataStoreFactory.create(scope = get(), produceFile = { androidContext().preferencesDataStoreFile("voxyn_island") }) }
-    single { IslandSurfaceStore(get(), get()) }
+    single(named("islandPreferences")) { PreferenceDataStoreFactory.create(scope = get(), produceFile = { androidContext().preferencesDataStoreFile("voxyn_island") }) }
+    single { IslandSurfaceStore(get(named("islandPreferences")), get()) }
+    single(named("islandTodosPreferences")) { PreferenceDataStoreFactory.create(scope = get(), produceFile = { androidContext().preferencesDataStoreFile("voxyn_island_todos") }) }
+    single { IslandTodoRepository(get(named("islandTodosPreferences")), get()) }
+    single { IslandMediaRepository() }
+    single(named("islandActivityPreferences")) { PreferenceDataStoreFactory.create(scope = get(), produceFile = { androidContext().preferencesDataStoreFile("voxyn_island_activities") }) }
+    single { IslandActivityRepository(get(named("islandActivityPreferences")), get(), AndroidIslandActivityAlarmScheduler(androidContext())) }
     single { MemoryRepository(androidContext()) }
     single { ContextEngine(androidContext()) }
 
@@ -181,7 +191,8 @@ val appModule = module {
             localKnowledge   = get(),
             claudeResolver = BuildConfig.CLAUDE_API_KEY.takeIf { it.isNotBlank() }?.let { ClaudeIntentResolver(it) },
             modeEngine     = get(),
-            contactResolver = get()
+            contactResolver = get(),
+            islandSurfaceStore = get()
         )
     }
 

@@ -14,14 +14,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,10 +40,16 @@ import com.voxyn.voice.VoiceInputService
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun IslandExpandedPanel(store: IslandSurfaceStore, onCollapse: () -> Unit, onShortcut: (String) -> Unit) {
+internal fun IslandExpandedPanel(store: IslandSurfaceStore, todoRepository: IslandTodoRepository, mediaRepository: IslandMediaRepository, activityRepository: IslandActivityRepository, onCollapse: () -> Unit, onShortcut: (String) -> Unit) {
     val state by store.state.collectAsState()
+    val todos by todoRepository.items.collectAsState()
+    val media by mediaRepository.state.collectAsState()
+    val activities by activityRepository.activities.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var todoDraft by remember { mutableStateOf("") }
+    var reminderTitle by remember { mutableStateOf("") }
+    var reminderMinutes by remember { mutableStateOf("5") }
     Surface(
         modifier = Modifier.fillMaxSize(),
         shape = RoundedCornerShape(24.dp),
@@ -68,31 +80,94 @@ internal fun IslandExpandedPanel(store: IslandSurfaceStore, onCollapse: () -> Un
             } else {
                 Text("Listening remains active in the background. Hold the island to pause.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
             }
-            InfoCard("Last verified transcript", state.verifiedTranscript ?: "No verified transcript yet")
+            val currentTranscript = when {
+                state.partialTranscript.isNotBlank() -> "Live: ${state.partialTranscript}"
+                state.verifiedTranscript != null -> state.verifiedTranscript.orEmpty()
+                state.transcriptionUnavailable -> "Speech recognition unavailable"
+                state.voiceState == IslandState.RECOVERING -> state.label
+                else -> "No transcript available"
+            }
+            InfoCard("Voice transcript", currentTranscript)
             state.recentAction?.let { InfoCard("Recent action", it) }
             state.verificationOutcome?.let { InfoCard("Pipeline result", it) }
-            val pipelineBusy = state.voiceState == IslandState.PROCESSING || state.voiceState == IslandState.SPEAKING ||
-                state.voiceState == IslandState.EXECUTING || state.voiceState == IslandState.CONFIRMATION
+            val pipelineBusy = state.voiceState in setOf(
+                IslandState.PROCESSING, IslandState.PLANNING, IslandState.SPEAKING,
+                IslandState.EXECUTING, IslandState.VERIFYING, IslandState.CONFIRMATION
+            )
             if (state.voiceState == IslandState.CONFIRMATION) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { onShortcut("yes") }, modifier = Modifier.weight(1f)) { Text("Confirm") }
                     Button(onClick = { onShortcut("no") }, modifier = Modifier.weight(1f)) { Text("Reject") }
                 }
             }
-            InfoCard("Music", "Playback actions use VOXYN's existing verified pipeline. Track metadata and synced lyrics need media-session access, which is not connected.")
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(onClick = { onShortcut("play music") }, enabled = !pipelineBusy, modifier = Modifier.weight(1f)) { Text("Play") }
-                Button(onClick = { onShortcut("pause music") }, enabled = !pipelineBusy, modifier = Modifier.weight(1f)) { Text("Pause") }
-                Button(onClick = { onShortcut("next track") }, enabled = !pipelineBusy, modifier = Modifier.weight(1f)) { Text("Next") }
+            val track = listOfNotNull(media.title, media.artist).joinToString(" · ")
+            val musicStatus = when {
+                !media.accessGranted -> "Allow VOXYN in Android Notification access to read active media sessions."
+                !media.sessionAvailable -> "No active media session exposed by Android."
+                track.isBlank() -> "A session is active, but track metadata is unavailable."
+                else -> "$track\n${if (media.isPlaying) "Playing" else "Paused"}"
             }
-            Button(onClick = { onShortcut("previous track") }, enabled = !pipelineBusy, modifier = Modifier.fillMaxWidth()) { Text("Previous track") }
+            InfoCard("Music", musicStatus)
+            if (!media.accessGranted) {
+                Button(onClick = {
+                    runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { VoxynLogger.w("Notification access settings unavailable: ${it.message}", "OVERLAY") }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Set up media access") }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = { mediaRepository.skipPrevious() }, enabled = media.canSkipPrevious, modifier = Modifier.weight(1f)) { Text("Previous") }
+                    Button(onClick = { mediaRepository.togglePlayback() }, enabled = media.canTogglePlayback, modifier = Modifier.weight(1f)) { Text(if (media.isPlaying) "Pause" else "Play") }
+                    Button(onClick = { mediaRepository.skipNext() }, enabled = media.canSkipNext, modifier = Modifier.weight(1f)) { Text("Next") }
+                }
+            }
+            Text("Lyrics are unavailable: no licensed lyrics source is configured.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+            TextButton(onClick = { onShortcut("play music") }, enabled = !pipelineBusy) { Text("Ask VOXYN to play music") }
             val battery = state.batteryPercent?.let { "$it%${if (state.charging) " · charging" else ""}" } ?: "Unavailable"
             val headphoneStatus = if (!state.headphoneStatusAvailable) "unavailable" else if (state.headphonesConnected) "connected" else "not connected"
             InfoCard("Device", "Battery: $battery\nHeadphones: $headphoneStatus")
             SettingRow("Resting mascot", state.mascotEnabled) { scope.launch { store.setMascotEnabled(it) } }
             SettingRow("Minimal notch", state.minimalNotch) { scope.launch { store.setMinimalNotch(it) } }
-            InfoCard("Timers, reminders and tasks", "Timer requests hand off to Android Clock. VOXYN cannot read active timer status; focus reminders and to-do lists are not tracked yet.")
+            InfoCard("Focus timer and reminders", "VOXYN schedules approximate local reminders. Android may delay them during Doze; exact-alarm access is not requested.")
+            Button(onClick = { scope.launch { activityRepository.schedule(IslandActivityKind.FOCUS_TIMER, "Focus session", 25) } }, modifier = Modifier.fillMaxWidth()) { Text("Start 25-minute focus timer") }
+            Text("Schedule a reminder", style = MaterialTheme.typography.titleSmall, color = Color(0xFF80DEEA))
+            TextField(value = reminderTitle, onValueChange = { reminderTitle = it.take(100) }, modifier = Modifier.fillMaxWidth(), label = { Text("Reminder") }, singleLine = true)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextField(value = reminderMinutes, onValueChange = { reminderMinutes = it.filter(Char::isDigit).take(5) }, modifier = Modifier.weight(1f), label = { Text("Minutes from now") }, singleLine = true)
+                val parsedMinutes = reminderMinutes.toIntOrNull()
+                Button(onClick = {
+                    scope.launch {
+                        val scheduled = activityRepository.schedule(IslandActivityKind.REMINDER, reminderTitle, parsedMinutes ?: 0)
+                        if (scheduled != null) reminderTitle = ""
+                    }
+                }, enabled = reminderTitle.trim().isNotEmpty() && parsedMinutes != null && parsedMinutes in 1..10_080) { Text("Set") }
+            }
+            if (activities.isEmpty()) Text("No active timers or reminders", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+            activities.forEach { activity ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    val kindLabel = if (activity.kind == IslandActivityKind.FOCUS_TIMER) "Focus" else "Reminder"
+                    val dueText = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(activity.dueAtMillis))
+                    Text("$kindLabel · ${activity.title}\n$dueText", Modifier.weight(1f), color = Color.White)
+                    Button(onClick = { scope.launch { activityRepository.cancel(activity.id) } }) { Text("Cancel") }
+                }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Text("Notifications are disabled, so due reminders will not alert you.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFCC80))
+                TextButton(onClick = { runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }) { Text("Open notification settings") }
+            }
             Button(onClick = { onShortcut("show timers") }, modifier = Modifier.fillMaxWidth()) { Text("Open timers") }
+            Text("To-do", style = MaterialTheme.typography.titleSmall, color = Color(0xFF80DEEA))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextField(value = todoDraft, onValueChange = { todoDraft = it.take(121) }, modifier = Modifier.weight(1f), label = { Text("Add a task") }, singleLine = true)
+                Button(onClick = { scope.launch { if (todoRepository.add(todoDraft)) todoDraft = "" } }, enabled = todoDraft.trim().isNotEmpty() && todoDraft.trim().length <= 120) { Text("Add") }
+            }
+            if (todos.isEmpty()) Text("No tasks yet", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+            todos.forEach { item ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = item.completed, onCheckedChange = { checked -> scope.launch { todoRepository.setCompleted(item.id, checked) } })
+                    Text(item.title, Modifier.weight(1f), color = if (item.completed) Color.LightGray else Color.White)
+                    Button(onClick = { scope.launch { todoRepository.delete(item.id) } }) { Text("Delete") }
+                }
+            }
             Button(onClick = {
                 context.startActivity(Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP })
             }, modifier = Modifier.fillMaxWidth()) { Text("Open VOXYN") }

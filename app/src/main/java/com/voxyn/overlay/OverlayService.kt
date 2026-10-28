@@ -28,6 +28,9 @@ import org.koin.android.ext.android.inject
 class OverlayService : Service() {
 
     private val surfaceStore: IslandSurfaceStore by inject()
+    private val todoRepository: IslandTodoRepository by inject()
+    private val mediaRepository: IslandMediaRepository by inject()
+    private val activityRepository: IslandActivityRepository by inject()
     private val engine: VoxynEngine by inject()
     private var batteryReceiver: BroadcastReceiver? = null
     private var audioDeviceCallback: AudioDeviceCallback? = null
@@ -47,7 +50,7 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
 
     // Queue state changes that arrive before the island is ready
-    private var pendingState: Pair<String, String?>? = null
+    private var pendingState: Pair<IslandState, String?>? = null
     private var islandReady = false
 
     override fun onCreate() {
@@ -75,13 +78,19 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val stateStr = intent?.getStringExtra("state") ?: return START_STICKY
         val textStr  = intent.getStringExtra("text")
+        val state = islandStateFromPipeline(stateStr)
+        if (state == null) {
+            VoxynLogger.w("Ignoring unknown island state event: $stateStr", "OVERLAY")
+            return START_STICKY
+        }
+        surfaceStore.setVoiceState(state, textStr)
 
         // If island isn't ready yet, save the state and apply it once ready
         if (!islandReady) {
-            pendingState = Pair(stateStr, textStr)
+            pendingState = Pair(state, textStr)
             VoxynLogger.d("Island not ready yet, queuing state: $stateStr", "OVERLAY")
         } else {
-            handler.post { applyState(stateStr, textStr) }
+            handler.post { dynamicIsland?.renderState(surfaceStore.state.value) }
         }
         return START_STICKY
     }
@@ -131,7 +140,7 @@ class OverlayService : Service() {
                 y = topMarginPx
             }
 
-            val island = DynamicIsland(this, windowManager, layoutParams!!, surfaceStore) { command ->
+            val island = DynamicIsland(this, windowManager, layoutParams!!, surfaceStore, todoRepository, mediaRepository, activityRepository) { command ->
                 if (!engine.isProcessing()) engine.process(command)
                 else VoxynLogger.w("Island shortcut ignored while the voice pipeline is busy", "OVERLAY")
             }
@@ -142,9 +151,9 @@ class OverlayService : Service() {
             VoxynLogger.i("DynamicIsland overlay added (120dp × 36dp @ y=8dp, top-center)", "OVERLAY")
 
             // Apply any state that arrived before we were ready
-            pendingState?.let { (s, t) ->
+            pendingState?.let {
                 pendingState = null
-                handler.postDelayed({ applyState(s, t) }, 100L)
+                handler.postDelayed({ dynamicIsland?.renderState(surfaceStore.state.value) }, 100L)
             }
 
         } catch (e: Exception) {
@@ -168,24 +177,17 @@ class OverlayService : Service() {
     // ─── State ────────────────────────────────────────────────────────
 
     fun setState(stateStr: String, textStr: String? = null) {
-        val state = when (stateStr.uppercase()) {
-            "STOPPED" -> IslandState.STOPPED
-            "LISTENING" -> IslandState.LISTENING
-            "PROCESSING", "THINKING" -> IslandState.PROCESSING
-            "EXECUTING" -> IslandState.EXECUTING
-            "SPEAKING" -> IslandState.SPEAKING
-            "CONFIRMATION" -> IslandState.CONFIRMATION
-            "SUCCESS" -> IslandState.SUCCESS
-            "ERROR" -> IslandState.ERROR
-            "RECOVERING" -> IslandState.RECOVERING
-            else -> IslandState.IDLE
+        val state = islandStateFromPipeline(stateStr)
+        if (state == null) {
+            VoxynLogger.w("Ignoring unknown island state event: $stateStr", "OVERLAY")
+            return
         }
         surfaceStore.setVoiceState(state, textStr)
         if (!islandReady) {
-            pendingState = Pair(stateStr, textStr)
+            pendingState = Pair(state, textStr)
             return
         }
-        handler.post { applyState(stateStr, textStr) }
+        handler.post { dynamicIsland?.renderState(surfaceStore.state.value) }
     }
 
     private fun registerDeviceEvents() {
@@ -264,24 +266,6 @@ class OverlayService : Service() {
 
     fun setSpeechActive(active: Boolean) {
         handler.post { dynamicIsland?.setSpeechActive(active) }
-    }
-
-    private fun applyState(stateStr: String, textStr: String?) {
-        val island = dynamicIsland ?: return
-        val state = when (stateStr.uppercase()) {
-            "STOPPED"     -> IslandState.STOPPED
-            "LISTENING"    -> IslandState.LISTENING
-            "PROCESSING",
-            "THINKING",
-            "EXECUTING"    -> IslandState.EXECUTING
-            "SPEAKING"    -> IslandState.SPEAKING
-            "CONFIRMATION" -> IslandState.CONFIRMATION
-            "SUCCESS"      -> IslandState.SUCCESS
-            "ERROR"        -> IslandState.ERROR
-            "RECOVERING"   -> IslandState.RECOVERING
-            else           -> IslandState.IDLE
-        }
-        island.updateState(state, textStr)
     }
 
     // ─── Notification ─────────────────────────────────────────────────

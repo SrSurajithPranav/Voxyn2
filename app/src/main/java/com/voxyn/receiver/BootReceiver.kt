@@ -15,6 +15,8 @@ import androidx.core.content.ContextCompat
 import com.voxyn.MainActivity
 import com.voxyn.overlay.OverlayService
 import com.voxyn.utils.VoxynLogger
+import com.voxyn.overlay.IslandActivityRepository
+import org.koin.core.context.GlobalContext
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -22,6 +24,8 @@ class BootReceiver : BroadcastReceiver() {
             intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         VoxynLogger.i("Boot complete — restarting VOXYN services", "BOOT")
+        runCatching { GlobalContext.get().get<IslandActivityRepository>().reschedulePending() }
+            .onFailure { VoxynLogger.w("Could not restore scheduled VOXYN activities: ${it.message}", "BOOT") }
 
         // Android 14+ forbids starting a microphone FGS from BOOT_COMPLETED for this app.
         // Let the user resume from a visible Activity; continuous listening remains unchanged
